@@ -8,7 +8,7 @@ import crypto from 'crypto';
 dotenv.config();
 const app = express();
 app.use(cors());
-
+// shopify
 app.get('/api/order/:id', async (req, res) => {
   const orderNumber = req.params.id;
 
@@ -35,6 +35,9 @@ app.get('/api/order/:id', async (req, res) => {
 });
 
 
+
+
+// endpoint para recibir datos de Salesmanago
 app.post('/api/sm-upsert', async (req, res) => {
   const apiKey = process.env.SMANAGO_API_KEY;
   const apiSecret = process.env.SMANAGO_API_SECRET;
@@ -73,7 +76,46 @@ app.post('/api/sm-upsert', async (req, res) => {
 });
 
 
+// endpoint para exportar contactos a Salesmanago con un tag específico
+app.post('/api/sm-export-tag', async (req, res) => {
+  const clientId = process.env.SMANAGO_CLIENT_ID;
+  const apiKey = process.env.SMANAGO_API_KEY;
+  const apiSecret = process.env.SMANAGO_API_SECRET;
+  const owner = 'salesmanago@silbonshop.com'; // correo específico para esta exportación
+  const requestTime = Date.now();
 
+  const sha = crypto
+    .createHash('sha1')
+    .update(apiKey + clientId + apiSecret)
+    .digest('hex');
+
+  const payload = {
+    clientId,
+    apiKey,
+    requestTime,
+    sha,
+    owner,
+    contacts: [
+      { addresseeType: 'tag', value: 'LANDINGPAGE_RECEPCION_PEDIDO' }
+    ],
+    data: [
+      { dataType: 'CONTACT' },
+      { dataType: 'PROPERTIES' }
+    ]
+  };
+
+  try {
+    const response = await axios.post('https://app3.salesmanago.pl/api/contact/export/data', payload, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    console.log('📤 Exportación solicitada. Respuesta:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ Error exportando contactos:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Error exportando contactos' });
+  }
+});
 
 
 
