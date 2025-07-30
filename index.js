@@ -8,7 +8,13 @@ import crypto from 'crypto';
 dotenv.config();
 const app = express();
 app.use(cors());
-// shopify
+
+
+function generateSha(apiKey, clientId, apiSecret) {
+  return crypto.createHash('sha1').update(apiKey + clientId + apiSecret).digest('hex');
+}
+
+// SHOPIFY - Obtener pedido por número
 app.get('/api/order/:id', async (req, res) => {
   const orderNumber = req.params.id;
 
@@ -34,6 +40,38 @@ app.get('/api/order/:id', async (req, res) => {
   }
 });
 
+// Función para subir a Salesmanago
+async function upsertOrderToSalesmanago(email, orderNumber, orderDate) {
+  const clientId = process.env.SMANAGO_CLIENT_ID;
+  const apiKey = process.env.SMANAGO_API_KEY;
+  const apiSecret = process.env.SMANAGO_API_SECRET;
+  const owner = process.env.SMANAGO_OWNER_EMAIL;
+  const requestTime = Date.now();
+  const sha = generateSha(apiKey, clientId, apiSecret);
+
+  const payload = {
+    clientId,
+    apiKey,
+    sha,
+    requestTime,
+    owner,
+    contact: { email },
+    properties: {
+      num_pedido: orderNumber,
+      fecha_pedido: orderDate
+    }
+  };
+
+  try {
+    const response = await axios.post('https://app3.salesmanago.com/api/contact/upsert', payload, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    console.log(`✅ Pedido ${orderNumber} subido para ${email}`);
+    return response.data;
+  } catch (error) {
+    console.error(`❌ Error al subir pedido de ${email}:`, error.response?.data || error.message);
+  }
+}
 
 
 
@@ -195,7 +233,7 @@ app.get('/api/sm-export-download/:requestId', async (req, res) => {
 
 
 // endpoint donde llama salesmanago para confirmar que se ha recibido el email
-app.post('/api/sm-confirmed-received', (req, res) => {
+app.post('/api/sm-confirmed-received', async (req, res) => {
   const allowedIps = ['89.25.223.94', '89.25.223.95'];
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress?.replace('::ffff:', '');
 
@@ -215,17 +253,65 @@ app.post('/api/sm-confirmed-received', (req, res) => {
     return res.status(400).json({ error: 'Formato de contactos no válido' });
   }
 
-  // 🔍 Aquí podrías cruzar con pedidos si quieres
-  const orders = contacts.map(contact => ({
-    email: contact.email,
-    receivedAt: new Date().toISOString(),
-    status: '✅ recibido'
-  }));
+  const clientId = process.env.SMANAGO_CLIENT_ID;
+  const apiKey = process.env.SMANAGO_API_KEY;
+  const apiSecret = process.env.SMANAGO_API_SECRET;
+  const owner = process.env.SMANAGO_OWNER_EMAIL;
+  const requestTime = Date.now();
+  const sha = generateSha(apiKey, clientId, apiSecret);
 
-  console.log('📥 Datos recibidos:', orders);
+  const processed = [];
 
-  return res.status(200).json({ success: true, received: orders.length });
+  for (const contact of contacts) {
+    const email = contact.email;
+
+    try {
+      // 🔍 Buscar pedido en Shopify por email
+      const response = await axios.get(`${process.env.SHOPIFY_API_URL}.json?email=${email}`, {
+        headers: {
+          'X-Shopify-Access-Token': process.env.SHOPIFY_API_TOKEN,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const order = response.data.orders?.[0];
+      if (!order) {
+        console.warn(`⚠️ No se encontró pedido para ${email}`);
+        continue;
+      }
+
+      const orderNumber = order.name?.replace('#', '') || 'N/A';
+      const orderDate = order.created_at?.split('T')[0] || '';
+
+      // 🔁 Subir a Salesmanago
+      const payload = {
+        clientId,
+        apiKey,
+        sha,
+        requestTime,
+        owner,
+        contact: { email },
+        properties: {
+          num_pedido: orderNumber,
+          fecha_pedido: orderDate
+        }
+      };
+
+      const smRes = await axios.post('https://app3.salesmanago.com/api/contact/upsert', payload, {
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      console.log(`✅ Pedido ${orderNumber} subido para ${email}`);
+      processed.push(email);
+
+    } catch (err) {
+      console.error(`❌ Error procesando ${email}:`, err.response?.data || err.message);
+    }
+  }
+
+  return res.status(200).json({ success: true, processed: processed.length });
 });
+
 
 
 
