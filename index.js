@@ -117,6 +117,41 @@ app.post('/api/sm-export-tag', async (req, res) => {
   }
 });
 
+// endpoint para consultar el estado de una exportación
+app.get('/api/sm-export-status/:requestId', async (req, res) => {
+  const clientId = process.env.SMANAGO_CLIENT_ID;
+  const apiKey = process.env.SMANAGO_API_KEY;
+  const apiSecret = process.env.SMANAGO_API_SECRET;
+  const owner = 'salesmanago@silbonshop.com'; // mismo owner
+  const requestTime = Date.now();
+  const requestId = req.params.requestId;
+
+  const sha = crypto
+    .createHash('sha1')
+    .update(apiKey + clientId + apiSecret)
+    .digest('hex');
+
+  const payload = {
+    clientId,
+    apiKey,
+    requestTime,
+    sha,
+    owner,
+    requestId
+  };
+
+  try {
+    const response = await axios.post('https://app3.salesmanago.pl/api/job/status', payload, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    console.log('📥 Estado de la exportación:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ Error consultando estado:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Error consultando estado de la exportación' });
+  }
+});
 
 
 
