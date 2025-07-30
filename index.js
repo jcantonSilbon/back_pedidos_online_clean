@@ -153,6 +153,45 @@ app.get('/api/sm-export-status/:requestId', async (req, res) => {
   }
 });
 
+// endpoint para descargar el archivo de contactos exportados
+app.get('/api/sm-export-download/:requestId', async (req, res) => {
+  const clientId = process.env.SMANAGO_CLIENT_ID;
+  const apiKey = process.env.SMANAGO_API_KEY;
+  const apiSecret = process.env.SMANAGO_API_SECRET;
+  const owner = 'salesmanago@silbonshop.com';
+  const requestTime = Date.now();
+  const requestId = req.params.requestId;
+
+  const sha = crypto
+    .createHash('sha1')
+    .update(apiKey + clientId + apiSecret)
+    .digest('hex');
+
+  const payload = {
+    clientId,
+    apiKey,
+    requestTime,
+    sha,
+    owner,
+    requestId
+  };
+
+  try {
+    const statusRes = await axios.post('https://app3.salesmanago.pl/api/job/status', payload, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const fileUrl = statusRes.data?.fileUrl;
+    if (!fileUrl) return res.status(404).json({ error: 'Archivo aún no disponible' });
+
+    const fileRes = await axios.get(fileUrl);
+    res.json(fileRes.data);
+  } catch (error) {
+    console.error('❌ Error al descargar:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Error descargando archivo de contactos' });
+  }
+});
+
 
 
 // endpoint donde llama salesmanago para confirmar que se ha recibido el email
