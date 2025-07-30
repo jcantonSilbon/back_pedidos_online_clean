@@ -8,6 +8,7 @@ import crypto from 'crypto';
 dotenv.config();
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 
 function generateSha(apiKey, clientId, apiSecret) {
