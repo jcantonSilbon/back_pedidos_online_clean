@@ -236,7 +236,9 @@ app.get('/api/sm-export-download/:requestId', async (req, res) => {
 // endpoint donde llama salesmanago para confirmar que se ha recibido el email
 app.post('/api/sm-confirmed-received', async (req, res) => {
   const allowedIps = ['89.25.223.94', '89.25.223.95'];
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress?.replace('::ffff:', '');
+  const ipHeader = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+  const ip = ipHeader.split(',')[0].trim(); // solo la primera IP
+
 
   const { ruleId, contacts } = req.body;
 
