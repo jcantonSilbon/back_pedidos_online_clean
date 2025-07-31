@@ -327,6 +327,7 @@ async function generateAndSendExcelReport() {
       console.log(`🔁 Intento ${i + 1}/${retries}...`);
       try {
         const resDownload = await axios.get(`${process.env.BASE_URL}/api/sm-export-download/${requestId}`);
+        console.log('resDownload:', resDownload.data);
         contacts = resDownload.data?.contacts || [];
 
         if (contacts.length > 0) {
