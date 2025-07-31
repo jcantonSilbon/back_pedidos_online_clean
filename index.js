@@ -318,30 +318,42 @@ async function generateAndSendExcelReport() {
 
     console.log('⏳ Esperando archivo...');
 
+let retries = 10;
+let delay = 10000; // 10 segundos
 let contacts = [];
-let retries = 5;
 
 for (let i = 0; i < retries; i++) {
   console.log(`🔁 Intento ${i + 1}/${retries}...`);
 
-  await new Promise(resolve => setTimeout(resolve, 10000)); // espera 10s
-
   try {
-    const statusRes = await axios.get(`${process.env.BASE_URL}/api/sm-export-download/${requestId}`);
-    contacts = statusRes.data?.contacts || [];
+    const statusRes = await axios.post('https://app3.salesmanago.pl/api/job/status', payload, {
+      headers: { 'Content-Type': 'application/json' }
+    });
 
-    if (contacts.length > 0) {
-      console.log(`✅ Archivo listo con ${contacts.length} contactos`);
-      break;
+    const fileUrl = statusRes.data?.fileUrl;
+    console.log('📎 fileUrl:', fileUrl);
+
+    if (fileUrl) {
+      const fileRes = await axios.get(fileUrl);
+      contacts = fileRes.data?.contacts || [];
+
+      if (contacts.length > 0) {
+        console.log(`✅ Archivo descargado con ${contacts.length} contactos`);
+        break;
+      }
     }
+
   } catch (err) {
-    console.warn('⚠️ Archivo aún no disponible, reintentando...');
+    console.warn('⚠️ Error en el intento:', err.message);
   }
 
-  if (i === retries - 1) {
-    throw new Error('⛔ No se pudo obtener el archivo después de varios intentos');
-  }
+  await new Promise(resolve => setTimeout(resolve, delay));
 }
+
+if (contacts.length === 0) {
+  throw new Error('⛔ No se pudo obtener el archivo después de varios intentos');
+}
+
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Pedidos');
