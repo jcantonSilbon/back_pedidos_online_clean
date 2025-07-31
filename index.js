@@ -318,55 +318,54 @@ async function generateAndSendExcelReport() {
 
     console.log('⏳ Esperando archivo...');
 
-let retries = 10;
-let delay = 10000; // 10 segundos
-let contacts = [];
+    let retries = 10;
+    let delay = 10000;
+    let contacts = [];
 
-for (let i = 0; i < retries; i++) {
-  console.log(`🔁 Intento ${i + 1}/${retries}...`);
+    for (let i = 0; i < retries; i++) {
+      console.log(`🔁 Intento ${i + 1}/${retries}...`);
+      try {
+        const requestTime = Date.now();
+        const sha = crypto.createHash('sha1')
+          .update(process.env.SMANAGO_API_KEY + process.env.SMANAGO_CLIENT_ID + process.env.SMANAGO_API_SECRET)
+          .digest('hex');
 
-  try {
-    const requestTime = Date.now();
-    const sha = crypto.createHash('sha1').update(process.env.SMANAGO_API_KEY + process.env.SMANAGO_CLIENT_ID + process.env.SMANAGO_API_SECRET).digest('hex');
+        const payload = {
+          clientId: process.env.SMANAGO_CLIENT_ID,
+          apiKey: process.env.SMANAGO_API_KEY,
+          sha,
+          requestTime,
+          owner: 'salesmanago@silbonshop.com',
+          requestId
+        };
 
-    const payload = {
-      clientId: process.env.SMANAGO_CLIENT_ID,
-      apiKey: process.env.SMANAGO_API_KEY,
-      sha,
-      requestTime,
-      owner: 'salesmanago@silbonshop.com',
-      requestId
-    };
+        const statusRes = await axios.post('https://app3.salesmanago.pl/api/job/status', payload, {
+          headers: { 'Content-Type': 'application/json' }
+        });
 
-    const statusRes = await axios.post('https://app3.salesmanago.pl/api/job/status', payload, {
-      headers: { 'Content-Type': 'application/json' }
-    });
+        const fileUrl = statusRes.data?.fileUrl;
+        console.log('📎 fileUrl:', fileUrl);
 
+        if (fileUrl) {
+          const fileRes = await axios.get(fileUrl);
+          contacts = fileRes.data?.contacts || [];
 
-    const fileUrl = statusRes.data?.fileUrl;
-    console.log('📎 fileUrl:', fileUrl);
+          if (contacts.length > 0) {
+            console.log(`✅ Archivo descargado con ${contacts.length} contactos`);
+            break;
+          }
+        }
 
-    if (fileUrl) {
-      const fileRes = await axios.get(fileUrl);
-      contacts = fileRes.data?.contacts || [];
-
-      if (contacts.length > 0) {
-        console.log(`✅ Archivo descargado con ${contacts.length} contactos`);
-        break;
+      } catch (err) {
+        console.warn('⚠️ Error en el intento:', err.message);
       }
+
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
 
-  } catch (err) {
-    console.warn('⚠️ Error en el intento:', err.message);
-  }
-
-  await new Promise(resolve => setTimeout(resolve, delay));
-}
-
-if (contacts.length === 0) {
-  throw new Error('⛔ No se pudo obtener el archivo después de varios intentos');
-}
-
+    if (contacts.length === 0) {
+      throw new Error('⛔ No se pudo obtener el archivo después de varios intentos');
+    }
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Pedidos');
@@ -386,6 +385,7 @@ if (contacts.length === 0) {
       const p = contact.contactPropertiesData || {};
       const fecha = p.fecha_pedido?.value;
       const recibido = p.pedidoRecibido?.value;
+      const problemas = p.problemas?.value;
 
       let dias = '';
       if (fecha && recibido === 'sí') {
@@ -398,20 +398,20 @@ if (contacts.length === 0) {
         num_pedido: p.num_pedido?.value || '',
         fecha_pedido: fecha || '',
         pedidoRecibido: recibido || '',
-        problemas: p.problemas?.value || '',
+        problemas: problemas || '',
         recogidaPedido: p.recogidaPedido?.value || '',
         todoCorrecto: p.todoCorrecto?.value || '',
         dias
       });
 
-      if (recibido === 'no' || p.problemas?.value === 'sí') {
+      if (recibido === 'no' || problemas === 'sí') {
         row.eachCell(cell => {
           cell.fill = {
             type: 'pattern',
             pattern: 'solid',
-            fgColor: { argb: 'FF0000' }
+            fgColor: { argb: 'FF0000' } // rojo
           };
-          cell.font = { color: { argb: 'FFFFFF' } };
+          cell.font = { color: { argb: 'FFFFFF' } }; // blanco
         });
       }
     }
@@ -419,20 +419,19 @@ if (contacts.length === 0) {
     const filename = `./reporte-pedidos-${Date.now()}.xlsx`;
     await workbook.xlsx.writeFile(filename);
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT, 10),
-  secure: false, // false para puerto 587
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  tls: {
-    ciphers: 'SSLv3',
-    rejectUnauthorized: false
-  }
-});
-
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT, 10),
+      secure: false,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+      tls: {
+        ciphers: 'SSLv3',
+        rejectUnauthorized: false
+      }
+    });
 
     await transporter.sendMail({
       from: process.env.SMTP_USER,
@@ -459,6 +458,7 @@ app.get('/api/test-export-excel', async (req, res) => {
   await generateAndSendExcelReport();
   res.send('✅ Exportación lanzada manualmente');
 });
+
 
 
 const PORT = process.env.PORT || 3001;
