@@ -327,7 +327,7 @@ async function generateAndSendExcelReport() {
       console.log(`🔁 Intento ${i + 1}/${retries}...`);
       try {
         const resDownload = await axios.get(`${process.env.BASE_URL}/api/sm-export-download/${requestId}`);
-        const resDownload = await axios.get(`${process.env.BASE_URL}/api/sm-export-download/${requestId}`);
+       
 const rawData = resDownload.data;
 
 const result = rawData.map((item) => {
