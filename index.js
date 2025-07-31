@@ -3,7 +3,11 @@ import axios from 'axios';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
-
+import ExcelJS from 'exceljs';
+import nodemailer from 'nodemailer';
+import fs from 'fs';
+import path from 'path';
+import cron from 'node-cron';
 
 dotenv.config();
 const app = express();
@@ -305,7 +309,105 @@ app.post('/api/sm-confirmed-received', async (req, res) => {
 });
 
 
+// Función para generar y enviar Excel
+async function generateAndSendExcelReport() {
+  try {
+    const exportRes = await axios.post(`${process.env.BASE_URL}/api/sm-export-tag`);
+    const requestId = exportRes.data?.requestId;
+    if (!requestId) throw new Error('No se recibió requestId');
 
+    console.log('⏳ Esperando archivo...');
+    await new Promise(resolve => setTimeout(resolve, 15000));
+
+    const statusRes = await axios.get(`${process.env.BASE_URL}/api/sm-export-download/${requestId}`);
+    const contacts = statusRes.data?.contacts || [];
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Pedidos');
+
+    worksheet.columns = [
+      { header: 'Email', key: 'email', width: 30 },
+      { header: 'Nº Pedido', key: 'num_pedido', width: 15 },
+      { header: 'Fecha Pedido', key: 'fecha_pedido', width: 20 },
+      { header: 'Pedido Recibido', key: 'pedidoRecibido', width: 20 },
+      { header: 'Problemas', key: 'problemas', width: 20 },
+      { header: 'Recogida Pedido', key: 'recogidaPedido', width: 20 },
+      { header: 'Todo Correcto', key: 'todoCorrecto', width: 20 },
+      { header: 'Días transcurridos', key: 'dias', width: 20 }
+    ];
+
+    for (const contact of contacts) {
+      const p = contact.contactPropertiesData || {};
+      const fecha = p.fecha_pedido?.value;
+      const recibido = p.pedidoRecibido?.value;
+
+      let dias = '';
+      if (fecha && recibido === 'sí') {
+        const diff = (new Date() - new Date(fecha)) / (1000 * 60 * 60 * 24);
+        dias = Math.floor(diff);
+      }
+
+      const row = worksheet.addRow({
+        email: contact.contactData?.email || '',
+        num_pedido: p.num_pedido?.value || '',
+        fecha_pedido: fecha || '',
+        pedidoRecibido: recibido || '',
+        problemas: p.problemas?.value || '',
+        recogidaPedido: p.recogidaPedido?.value || '',
+        todoCorrecto: p.todoCorrecto?.value || '',
+        dias
+      });
+
+      if (recibido === 'no' || p.problemas?.value === 'sí') {
+        row.eachCell(cell => {
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FF0000' }
+          };
+          cell.font = { color: { argb: 'FFFFFF' } };
+        });
+      }
+    }
+
+    const filename = `./reporte-pedidos-${Date.now()}.xlsx`;
+    await workbook.xlsx.writeFile(filename);
+
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: 587,
+      secure: false,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
+      }
+    });
+
+    await transporter.sendMail({
+      from: process.env.SMTP_USER,
+      to: 'jcanton@silbon.es',
+      subject: '📦 Reporte semanal de pedidos - Salesmanago',
+      text: 'Adjunto Excel con el resumen de pedidos exportados desde Salesmanago.',
+      attachments: [{
+        filename: path.basename(filename),
+        path: filename
+      }]
+    });
+
+    console.log('📧 Excel enviado correctamente');
+  } catch (err) {
+    console.error('❌ Error generando o enviando Excel:', err);
+  }
+}
+
+// CRON: Ejecutar cada lunes a las 9:00
+cron.schedule('0 9 * * 1', generateAndSendExcelReport);
+
+// Ruta manual para lanzar el Excel desde Postman
+app.get('/api/test-export-excel', async (req, res) => {
+  await generateAndSendExcelReport();
+  res.send('✅ Exportación lanzada manualmente');
+});
 
 
 const PORT = process.env.PORT || 3001;
