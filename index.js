@@ -236,84 +236,74 @@ app.get('/api/sm-export-download/:requestId', async (req, res) => {
 // endpoint donde llama salesmanago para confirmar que se ha recibido el email
 app.post('/api/sm-confirmed-received', async (req, res) => {
   const allowedIps = ['89.25.223.94', '89.25.223.95'];
-  const ipHeader = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
-  const ip = ipHeader.split(',')[0].trim(); // solo la primera IP
+  const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress?.replace('::ffff:', '');
 
-
-  const { ruleId, contacts } = req.body;
+  const { id, email } = req.body;
 
   if (!allowedIps.includes(ip)) {
     console.warn(`❌ IP no autorizada: ${ip}`);
     return res.status(403).json({ error: 'IP no autorizada' });
   }
 
-  if (ruleId !== 'ff9f1f0d-ffb7-4a00-9d84-999d2657f303') {
-    console.warn(`❌ ruleId inválido: ${ruleId}`);
-    return res.status(403).json({ error: 'ruleId inválido' });
+  if (id !== 'ff9f1f0d-ffb7-4a00-9d84-999d2657f303') {
+    console.warn(`❌ id (regla) inválido: ${id}`);
+    return res.status(403).json({ error: 'id inválido' });
   }
 
-  if (!contacts || !Array.isArray(contacts)) {
-    return res.status(400).json({ error: 'Formato de contactos no válido' });
+  if (!email) {
+    return res.status(400).json({ error: 'Email no proporcionado' });
   }
 
-  const clientId = process.env.SMANAGO_CLIENT_ID;
-  const apiKey = process.env.SMANAGO_API_KEY;
-  const apiSecret = process.env.SMANAGO_API_SECRET;
-  const owner = process.env.SMANAGO_OWNER_EMAIL;
-  const requestTime = Date.now();
-  const sha = generateSha(apiKey, clientId, apiSecret);
-
-  const processed = [];
-
-  for (const contact of contacts) {
-    const email = contact.email;
-
-    try {
-      // 🔍 Buscar pedido en Shopify por email
-      const response = await axios.get(`${process.env.SHOPIFY_API_URL}.json?email=${email}`, {
-        headers: {
-          'X-Shopify-Access-Token': process.env.SHOPIFY_API_TOKEN,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const order = response.data.orders?.[0];
-      if (!order) {
-        console.warn(`⚠️ No se encontró pedido para ${email}`);
-        continue;
+  try {
+    const response = await axios.get(`${process.env.SHOPIFY_API_URL}.json?email=${email}`, {
+      headers: {
+        'X-Shopify-Access-Token': process.env.SHOPIFY_API_TOKEN,
+        'Content-Type': 'application/json'
       }
+    });
 
-      const orderNumber = order.name?.replace('#', '') || 'N/A';
-      const orderDate = order.created_at?.split('T')[0] || '';
-
-      // 🔁 Subir a Salesmanago
-      const payload = {
-        clientId,
-        apiKey,
-        sha,
-        requestTime,
-        owner,
-        contact: { email },
-        properties: {
-          num_pedido: orderNumber,
-          fecha_pedido: orderDate
-        }
-      };
-
-      const smRes = await axios.post('https://app3.salesmanago.com/api/contact/upsert', payload, {
-        headers: { 'Content-Type': 'application/json' }
-      });
-
-      console.log(`✅ Pedido ${orderNumber} subido para ${email}`);
-      processed.push(email);
-
-    } catch (err) {
-      console.error(`❌ Error procesando ${email}:`, err.response?.data || err.message);
+    const order = response.data.orders?.[0];
+    if (!order) {
+      console.warn(`⚠️ No se encontró pedido para ${email}`);
+      return res.status(404).json({ error: 'Pedido no encontrado' });
     }
-  }
 
-  return res.status(200).json({ success: true, processed: processed.length });
+    const orderNumber = order.name?.replace('#', '') || 'N/A';
+    const orderDate = order.created_at?.split('T')[0] || '';
+
+    // 🔁 Subir a Salesmanago
+    const clientId = process.env.SMANAGO_CLIENT_ID;
+    const apiKey = process.env.SMANAGO_API_KEY;
+    const apiSecret = process.env.SMANAGO_API_SECRET;
+    const owner = process.env.SMANAGO_OWNER_EMAIL;
+    const requestTime = Date.now();
+    const sha = crypto.createHash('sha1').update(apiKey + clientId + apiSecret).digest('hex');
+
+    const payload = {
+      clientId,
+      apiKey,
+      sha,
+      requestTime,
+      owner,
+      contact: { email },
+      properties: {
+        num_pedido: orderNumber,
+        fecha_pedido: orderDate
+      }
+    };
+
+    const smRes = await axios.post('https://app3.salesmanago.com/api/contact/upsert', payload, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    console.log(`✅ Pedido ${orderNumber} subido para ${email}`);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error(`❌ Error procesando ${email}:`, err.response?.data || err.message);
+    return res.status(500).json({ error: 'Error interno' });
+  }
 });
+
 
 
 
