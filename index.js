@@ -317,10 +317,31 @@ async function generateAndSendExcelReport() {
     if (!requestId) throw new Error('No se recibió requestId');
 
     console.log('⏳ Esperando archivo...');
-    await new Promise(resolve => setTimeout(resolve, 15000));
 
+let contacts = [];
+let retries = 5;
+
+for (let i = 0; i < retries; i++) {
+  console.log(`🔁 Intento ${i + 1}/${retries}...`);
+
+  await new Promise(resolve => setTimeout(resolve, 10000)); // espera 10s
+
+  try {
     const statusRes = await axios.get(`${process.env.BASE_URL}/api/sm-export-download/${requestId}`);
-    const contacts = statusRes.data?.contacts || [];
+    contacts = statusRes.data?.contacts || [];
+
+    if (contacts.length > 0) {
+      console.log(`✅ Archivo listo con ${contacts.length} contactos`);
+      break;
+    }
+  } catch (err) {
+    console.warn('⚠️ Archivo aún no disponible, reintentando...');
+  }
+
+  if (i === retries - 1) {
+    throw new Error('⛔ No se pudo obtener el archivo después de varios intentos');
+  }
+}
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Pedidos');
