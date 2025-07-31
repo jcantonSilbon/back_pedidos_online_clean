@@ -373,15 +373,20 @@ async function generateAndSendExcelReport() {
     const filename = `./reporte-pedidos-${Date.now()}.xlsx`;
     await workbook.xlsx.writeFile(filename);
 
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: 587,
-      secure: false,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
-      }
-    });
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: parseInt(process.env.SMTP_PORT, 10),
+  secure: false, // false para puerto 587
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+  tls: {
+    ciphers: 'SSLv3',
+    rejectUnauthorized: false
+  }
+});
+
 
     await transporter.sendMail({
       from: process.env.SMTP_USER,
