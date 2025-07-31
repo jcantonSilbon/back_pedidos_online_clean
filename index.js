@@ -326,9 +326,22 @@ for (let i = 0; i < retries; i++) {
   console.log(`🔁 Intento ${i + 1}/${retries}...`);
 
   try {
+    const requestTime = Date.now();
+    const sha = crypto.createHash('sha1').update(process.env.SMANAGO_API_KEY + process.env.SMANAGO_CLIENT_ID + process.env.SMANAGO_API_SECRET).digest('hex');
+
+    const payload = {
+      clientId: process.env.SMANAGO_CLIENT_ID,
+      apiKey: process.env.SMANAGO_API_KEY,
+      sha,
+      requestTime,
+      owner: 'salesmanago@silbonshop.com',
+      requestId
+    };
+
     const statusRes = await axios.post('https://app3.salesmanago.pl/api/job/status', payload, {
       headers: { 'Content-Type': 'application/json' }
     });
+
 
     const fileUrl = statusRes.data?.fileUrl;
     console.log('📎 fileUrl:', fileUrl);
