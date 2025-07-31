@@ -327,39 +327,38 @@ async function generateAndSendExcelReport() {
       console.log(`🔁 Intento ${i + 1}/${retries}...`);
       try {
         const resDownload = await axios.get(`${process.env.BASE_URL}/api/sm-export-download/${requestId}`);
-       
-const rawData = resDownload.data;
+        const rawData = resDownload.data;
 
-const result = rawData.map((item) => {
-  const contactId = Object.keys(item)[0];
-  const data = item[contactId];
-  const email = data.contactData?.email || '';
+        const result = rawData.map((item) => {
+          const contactId = Object.keys(item)[0];
+          const data = item[contactId];
+          const email = data.contactData?.email || '';
 
-  // Inicializamos los valores vacíos
-  const contactProps = {
-    email,
-    num_pedido: '',
-    fecha_pedido: '',
-    pedidoRecibido: '',
-    problemas: '',
-    recogidaPedido: '',
-    todoCorrecto: ''
-  };
+          const contactProps = {
+            email,
+            num_pedido: '',
+            fecha_pedido: '',
+            pedidoRecibido: '',
+            problemas: '',
+            recogidaPedido: '',
+            todoCorrecto: ''
+          };
 
-  const propsArray = data.contactPropertiesData || [];
+          const propsArray = data.contactPropertiesData || [];
 
-  // Rellenamos los datos desde contactPropertiesData
-  for (const prop of propsArray) {
-    if (prop.name in contactProps) {
-      contactProps[prop.name] = prop.value || '';
-    }
-  }
+          for (const prop of propsArray) {
+            if (prop.name in contactProps) {
+              contactProps[prop.name] = prop.value || '';
+            }
+          }
 
-  return contactProps;
-});
+          return contactProps;
+        });
 
-console.log('📋 Contactos procesados:');
-console.dir(result, { depth: null });
+        if (result.length > 0) {
+          contacts = result;
+          break;
+        }
 
       } catch (err) {
         console.warn('⚠️ Error en el intento:', err.message);
@@ -372,15 +371,67 @@ console.dir(result, { depth: null });
       throw new Error('⛔ No se pudo obtener el archivo después de varios intentos');
     }
 
-    // 🔍 Mostrar por consola el contenido
-    console.log('📋 Contactos recibidos:');
-    console.dir(contacts, { depth: null });
+    // 📁 Crear Excel
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Pedidos');
+
+    worksheet.columns = [
+      { header: 'Email', key: 'email', width: 30 },
+      { header: 'Nº Pedido', key: 'num_pedido', width: 15 },
+      { header: 'Fecha Pedido', key: 'fecha_pedido', width: 20 },
+      { header: 'Pedido Recibido', key: 'pedidoRecibido', width: 20 },
+      { header: 'Problemas', key: 'problemas', width: 20 },
+      { header: 'Recogida Pedido', key: 'recogidaPedido', width: 20 },
+      { header: 'Todo Correcto', key: 'todoCorrecto', width: 20 }
+    ];
+
+    for (const contact of contacts) {
+      const row = worksheet.addRow(contact);
+
+      if (contact.pedidoRecibido === 'no' || contact.problemas === 'sí') {
+        row.eachCell(cell => {
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FF0000' }
+          };
+          cell.font = { color: { argb: 'FFFFFF' } };
+        });
+      }
+    }
+
+    const filename = `./reporte-pedidos-${Date.now()}.xlsx`;
+    await workbook.xlsx.writeFile(filename);
+
+    // 📧 Enviar por correo
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT, 10),
+      secure: false,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+      tls: {
+        ciphers: 'SSLv3',
+        rejectUnauthorized: false
+      }
+    });
+
+    await transporter.sendMail({
+      from: process.env.SMTP_USER,
+      to: 'jcanton@silbon.es',
+      subject: '📦 Reporte semanal de pedidos - Salesmanago',
+      text: 'Adjunto Excel con el resumen de pedidos exportados desde Salesmanago.',
+      attachments: [{ filename: path.basename(filename), path: filename }]
+    });
+
+    console.log('📧 Excel enviado correctamente');
 
   } catch (err) {
     console.error('❌ Error en generateAndSendExcelReport:', err);
   }
 }
-
 
 
 
