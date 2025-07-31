@@ -327,13 +327,40 @@ async function generateAndSendExcelReport() {
       console.log(`🔁 Intento ${i + 1}/${retries}...`);
       try {
         const resDownload = await axios.get(`${process.env.BASE_URL}/api/sm-export-download/${requestId}`);
-        console.log('resDownload:', resDownload.data);
-        contacts = resDownload.data?.contacts || [];
+        const resDownload = await axios.get(`${process.env.BASE_URL}/api/sm-export-download/${requestId}`);
+const rawData = resDownload.data;
 
-        if (contacts.length > 0) {
-          console.log(`✅ Archivo descargado con ${contacts.length} contactos`);
-          break;
-        }
+const result = rawData.map((item) => {
+  const contactId = Object.keys(item)[0];
+  const data = item[contactId];
+  const email = data.contactData?.email || '';
+
+  // Inicializamos los valores vacíos
+  const contactProps = {
+    email,
+    num_pedido: '',
+    fecha_pedido: '',
+    pedidoRecibido: '',
+    problemas: '',
+    recogidaPedido: '',
+    todoCorrecto: ''
+  };
+
+  const propsArray = data.contactPropertiesData || [];
+
+  // Rellenamos los datos desde contactPropertiesData
+  for (const prop of propsArray) {
+    if (prop.name in contactProps) {
+      contactProps[prop.name] = prop.value || '';
+    }
+  }
+
+  return contactProps;
+});
+
+console.log('📋 Contactos procesados:');
+console.dir(result, { depth: null });
+
       } catch (err) {
         console.warn('⚠️ Error en el intento:', err.message);
       }
