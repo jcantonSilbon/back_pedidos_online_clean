@@ -309,53 +309,30 @@ app.post('/api/sm-confirmed-received', async (req, res) => {
 });
 
 
-// Función para generar y enviar Excel
+// Función para mostrar datos del Excel desde tu endpoint custom
 async function generateAndSendExcelReport() {
   try {
     const exportRes = await axios.post(`${process.env.BASE_URL}/api/sm-export-tag`);
     const requestId = exportRes.data?.requestId;
-    if (!requestId) throw new Error('No se recibió requestId');
+    if (!requestId) throw new Error('❌ No se recibió requestId');
 
+    console.log(`📤 Exportación solicitada. requestId: ${requestId}`);
     console.log('⏳ Esperando archivo...');
 
-    let retries = 10;
-    let delay = 10000;
+    const retries = 10;
+    const delay = 10000;
     let contacts = [];
 
     for (let i = 0; i < retries; i++) {
       console.log(`🔁 Intento ${i + 1}/${retries}...`);
       try {
-        const requestTime = Date.now();
-        const sha = crypto.createHash('sha1')
-          .update(process.env.SMANAGO_API_KEY + process.env.SMANAGO_CLIENT_ID + process.env.SMANAGO_API_SECRET)
-          .digest('hex');
+        const resDownload = await axios.get(`${process.env.BASE_URL}/api/sm-export-download/${requestId}`);
+        contacts = resDownload.data?.contacts || [];
 
-        const payload = {
-          clientId: process.env.SMANAGO_CLIENT_ID,
-          apiKey: process.env.SMANAGO_API_KEY,
-          sha,
-          requestTime,
-          owner: 'salesmanago@silbonshop.com',
-          requestId
-        };
-
-        const statusRes = await axios.post('https://app3.salesmanago.pl/api/job/status', payload, {
-          headers: { 'Content-Type': 'application/json' }
-        });
-
-        const fileUrl = statusRes.data?.fileUrl;
-        console.log('📎 fileUrl:', fileUrl);
-
-        if (fileUrl) {
-          const fileRes = await axios.get(fileUrl);
-          contacts = fileRes.data?.contacts || [];
-
-          if (contacts.length > 0) {
-            console.log(`✅ Archivo descargado con ${contacts.length} contactos`);
-            break;
-          }
+        if (contacts.length > 0) {
+          console.log(`✅ Archivo descargado con ${contacts.length} contactos`);
+          break;
         }
-
       } catch (err) {
         console.warn('⚠️ Error en el intento:', err.message);
       }
@@ -367,88 +344,17 @@ async function generateAndSendExcelReport() {
       throw new Error('⛔ No se pudo obtener el archivo después de varios intentos');
     }
 
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Pedidos');
+    // 🔍 Mostrar por consola el contenido
+    console.log('📋 Contactos recibidos:');
+    console.dir(contacts, { depth: null });
 
-    worksheet.columns = [
-      { header: 'Email', key: 'email', width: 30 },
-      { header: 'Nº Pedido', key: 'num_pedido', width: 15 },
-      { header: 'Fecha Pedido', key: 'fecha_pedido', width: 20 },
-      { header: 'Pedido Recibido', key: 'pedidoRecibido', width: 20 },
-      { header: 'Problemas', key: 'problemas', width: 20 },
-      { header: 'Recogida Pedido', key: 'recogidaPedido', width: 20 },
-      { header: 'Todo Correcto', key: 'todoCorrecto', width: 20 },
-      { header: 'Días transcurridos', key: 'dias', width: 20 }
-    ];
-
-    for (const contact of contacts) {
-      const p = contact.contactPropertiesData || {};
-      const fecha = p.fecha_pedido?.value;
-      const recibido = p.pedidoRecibido?.value;
-      const problemas = p.problemas?.value;
-
-      let dias = '';
-      if (fecha && recibido === 'sí') {
-        const diff = (new Date() - new Date(fecha)) / (1000 * 60 * 60 * 24);
-        dias = Math.floor(diff);
-      }
-
-      const row = worksheet.addRow({
-        email: contact.contactData?.email || '',
-        num_pedido: p.num_pedido?.value || '',
-        fecha_pedido: fecha || '',
-        pedidoRecibido: recibido || '',
-        problemas: problemas || '',
-        recogidaPedido: p.recogidaPedido?.value || '',
-        todoCorrecto: p.todoCorrecto?.value || '',
-        dias
-      });
-
-      if (recibido === 'no' || problemas === 'sí') {
-        row.eachCell(cell => {
-          cell.fill = {
-            type: 'pattern',
-            pattern: 'solid',
-            fgColor: { argb: 'FF0000' } // rojo
-          };
-          cell.font = { color: { argb: 'FFFFFF' } }; // blanco
-        });
-      }
-    }
-
-    const filename = `./reporte-pedidos-${Date.now()}.xlsx`;
-    await workbook.xlsx.writeFile(filename);
-
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT, 10),
-      secure: false,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-      tls: {
-        ciphers: 'SSLv3',
-        rejectUnauthorized: false
-      }
-    });
-
-    await transporter.sendMail({
-      from: process.env.SMTP_USER,
-      to: 'jcanton@silbon.es',
-      subject: '📦 Reporte semanal de pedidos - Salesmanago',
-      text: 'Adjunto Excel con el resumen de pedidos exportados desde Salesmanago.',
-      attachments: [{
-        filename: path.basename(filename),
-        path: filename
-      }]
-    });
-
-    console.log('📧 Excel enviado correctamente');
   } catch (err) {
-    console.error('❌ Error generando o enviando Excel:', err);
+    console.error('❌ Error en generateAndSendExcelReport:', err);
   }
 }
+
+
+
 
 // CRON: Ejecutar cada lunes a las 9:00
 cron.schedule('0 9 * * 1', generateAndSendExcelReport);
