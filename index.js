@@ -396,9 +396,26 @@ async function generateAndSendExcelReport() {
       let retraso = false;
 
       if (fechaPedido && fechaEncuesta) {
-        const diff = (new Date(fechaEncuesta) - new Date(fechaPedido)) / (1000 * 60 * 60 * 24);
-        dias_entrega = Math.floor(diff);
-        if (dias_entrega > 7) retraso = true;
+        // Función para parsear dd/MM/yyyy → Date
+        function parseFechaEuropea(str) {
+          const [dd, mm, yyyy] = str.split('/');
+          return new Date(`${yyyy}-${mm}-${dd}`);
+        }
+
+        let dias_entrega = '';
+        let retraso = false;
+
+        if (fechaPedido && fechaEncuesta) {
+          const fechaPedidoDate = new Date(fechaPedido);
+          const fechaEncuestaDate = fechaEncuesta.includes('/')
+            ? parseFechaEuropea(fechaEncuesta)
+            : new Date(fechaEncuesta);
+
+          const diff = (fechaEncuestaDate - fechaPedidoDate) / (1000 * 60 * 60 * 24);
+          dias_entrega = Math.floor(diff);
+          if (dias_entrega > 7) retraso = true;
+        }
+
       }
 
       const row = worksheet.addRow({
