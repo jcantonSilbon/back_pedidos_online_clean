@@ -464,6 +464,59 @@ app.get('/api/test-export-excel', async (req, res) => {
   res.send('✅ Exportación lanzada manualmente');
 });
 
+//prueba de verificación rapida 
+app.get('/api/check-fecha-encuesta', async (req, res) => {
+  try {
+    // 1. Lanzamos exportación
+    const exportRes = await axios.post(`${process.env.BASE_URL}/api/sm-export-tag`);
+    const requestId = exportRes.data?.requestId;
+    if (!requestId) throw new Error('❌ No se recibió requestId');
+
+    console.log(`📤 Exportación lanzada: ${requestId}`);
+
+    // 2. Esperamos el archivo (máximo 10 intentos)
+    const retries = 10;
+    const delay = 10000;
+
+    for (let i = 0; i < retries; i++) {
+      console.log(`🔁 Esperando archivo... intento ${i + 1}/${retries}`);
+      try {
+        const resDownload = await axios.get(`${process.env.BASE_URL}/api/sm-export-download/${requestId}`);
+        const rawData = resDownload.data;
+
+        const propsSet = new Set();
+
+        for (const item of rawData) {
+          const contactId = Object.keys(item)[0];
+          const props = item[contactId].contactPropertiesData || [];
+          for (const prop of props) {
+            propsSet.add(prop.name);
+          }
+        }
+
+        const allProps = Array.from(propsSet);
+        console.log('🧾 Propiedades encontradas:', allProps);
+
+        const incluyeEncuesta = allProps.includes('fecha_encuesta');
+        return res.json({
+          fecha_encuesta_presente: incluyeEncuesta,
+          propiedades: allProps
+        });
+
+      } catch (err) {
+        console.warn('⏳ Archivo aún no disponible...');
+      }
+
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+
+    throw new Error('⛔ Archivo no disponible tras varios intentos');
+
+  } catch (err) {
+    console.error('❌ Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 
 const PORT = process.env.PORT || 3001;
