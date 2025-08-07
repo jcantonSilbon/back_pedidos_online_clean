@@ -436,7 +436,7 @@ async function generateAndSendExcelReport() {
 
 
 // CRON: Ejecutar cada lunes a las 9:00
-cron.schedule('0 9 * * 1', generateAndSendExcelReport);
+cron.schedule('0 9 * * *', generateAndSendExcelReport);
 
 // Ruta manual para lanzar el Excel desde Postman
 app.get('/api/test-export-excel', async (req, res) => {
