@@ -338,6 +338,7 @@ async function generateAndSendExcelReport() {
             email,
             num_pedido: '',
             fecha_pedido: '',
+            fecha_encuesta: '',
             pedidoRecibido: '',
             problemas: '',
             recogidaPedido: '',
@@ -379,6 +380,8 @@ async function generateAndSendExcelReport() {
       { header: 'Email', key: 'email', width: 30 },
       { header: 'Nº Pedido', key: 'num_pedido', width: 15 },
       { header: 'Fecha Pedido', key: 'fecha_pedido', width: 20 },
+      { header: 'Fecha Encuesta', key: 'fecha_encuesta', width: 20 },
+      { header: 'Días de entrega', key: 'dias_entrega', width: 18 },
       { header: 'Pedido Recibido', key: 'pedidoRecibido', width: 20 },
       { header: 'Problemas', key: 'problemas', width: 20 },
       { header: 'Recogida Pedido', key: 'recogidaPedido', width: 20 },
@@ -386,9 +389,25 @@ async function generateAndSendExcelReport() {
     ];
 
     for (const contact of contacts) {
-      const row = worksheet.addRow(contact);
+      const fechaPedido = contact.fecha_pedido;
+      const fechaEncuesta = contact.fecha_encuesta;
 
-      if (contact.pedidoRecibido === 'no' || contact.problemas === 'sí') {
+      let dias_entrega = '';
+      let retraso = false;
+
+      if (fechaPedido && fechaEncuesta) {
+        const diff = (new Date(fechaEncuesta) - new Date(fechaPedido)) / (1000 * 60 * 60 * 24);
+        dias_entrega = Math.floor(diff);
+        if (dias_entrega > 7) retraso = true;
+      }
+
+      const row = worksheet.addRow({
+        ...contact,
+        fecha_encuesta: fechaEncuesta || '',
+        dias_entrega
+      });
+
+      if (contact.pedidoRecibido === 'no' || contact.problemas === 'sí' || retraso) {
         row.eachCell(cell => {
           cell.fill = {
             type: 'pattern',
@@ -399,6 +418,7 @@ async function generateAndSendExcelReport() {
         });
       }
     }
+
 
     const filename = `./reporte-pedidos-${Date.now()}.xlsx`;
     await workbook.xlsx.writeFile(filename);
