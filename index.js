@@ -392,36 +392,31 @@ async function generateAndSendExcelReport() {
       const fechaPedido = contact.fecha_pedido;
       const fechaEncuesta = contact.fecha_encuesta;
 
+      // ✅ Declaración correcta (fuera del if)
       let dias_entrega = '';
       let retraso = false;
 
+      // 👇 esta función puedes declararla arriba en el archivo si prefieres
+      function parseFechaEuropea(str) {
+        const [dd, mm, yyyy] = str.split('/');
+        return new Date(`${yyyy}-${mm}-${dd}`);
+      }
+
       if (fechaPedido && fechaEncuesta) {
-        // Función para parsear dd/MM/yyyy → Date
-        function parseFechaEuropea(str) {
-          const [dd, mm, yyyy] = str.split('/');
-          return new Date(`${yyyy}-${mm}-${dd}`);
-        }
+        const fechaPedidoDate = new Date(fechaPedido);
+        const fechaEncuestaDate = fechaEncuesta.includes('/')
+          ? parseFechaEuropea(fechaEncuesta)
+          : new Date(fechaEncuesta);
 
-        let dias_entrega = '';
-        let retraso = false;
-
-        if (fechaPedido && fechaEncuesta) {
-          const fechaPedidoDate = new Date(fechaPedido);
-          const fechaEncuestaDate = fechaEncuesta.includes('/')
-            ? parseFechaEuropea(fechaEncuesta)
-            : new Date(fechaEncuesta);
-
-          const diff = (fechaEncuestaDate - fechaPedidoDate) / (1000 * 60 * 60 * 24);
-          dias_entrega = Math.floor(diff);
-          if (dias_entrega > 7) retraso = true;
-        }
-
+        const diff = (fechaEncuestaDate - fechaPedidoDate) / (1000 * 60 * 60 * 24);
+        dias_entrega = Math.floor(diff);
+        if (dias_entrega > 7) retraso = true;
       }
 
       const row = worksheet.addRow({
         ...contact,
         fecha_encuesta: fechaEncuesta || '',
-        dias_entrega
+        dias_entrega // ✅ ahora sí tiene el valor calculado
       });
 
       if (contact.pedidoRecibido === 'no' || contact.problemas === 'sí' || retraso) {
@@ -435,6 +430,7 @@ async function generateAndSendExcelReport() {
         });
       }
     }
+
 
 
     const filename = `./reporte-pedidos-${Date.now()}.xlsx`;
