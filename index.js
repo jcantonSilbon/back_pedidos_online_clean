@@ -669,20 +669,33 @@ chart.setHeight(400);
 chart.setConfig({
   type: 'doughnut',
   data: {
-    labels: ['Sí', 'No'],
+    labels: [`Sí (${recibidos} - ${((recibidos / total) * 100).toFixed(1)}%)`, `No (${noRecibidos} - ${((noRecibidos / total) * 100).toFixed(1)}%)`],
+    
     datasets: [{
       data: [recibidos, noRecibidos],
       backgroundColor: ['#36A2EB', '#FF6384']
     }]
   },
   options: {
-    plugins: {
-      legend: {
-        position: 'bottom'
+      plugins: {
+        legend: { position: 'top' },
+        datalabels: {
+          color: '#000',
+          font: { weight: 'bold' },
+          formatter: (value, ctx) => {
+            const percentage = ((value / total) * 100).toFixed(1);
+            return `${value} (${percentage}%)`;
+          }
+        }
       }
-    }
   }
 });
+const startOfMonth = new Date(currentYear, currentMonth - 1, 1);
+const endOfMonth = new Date(currentYear, currentMonth, 0);
+const formatDate = (date) => date.toLocaleDateString('es-ES');
+
+doc.text(`Rango de fechas: ${formatDate(startOfMonth)} a ${formatDate(endOfMonth)}`, 50, 140);
+
 
 const donut = await chart.toBinary();
 
