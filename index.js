@@ -706,6 +706,17 @@ async function generateAndSendMonthlyReport() {
     const doc = new PDFDocument();
     const pdfPath = `./reporte-pedidos-${Date.now()}.pdf`;
     doc.pipe(fs.createWriteStream(pdfPath));
+
+    // Footer profesional
+    const footerText = 'Este informe ha sido generado automáticamente mediante una solución desarrollada por Javier García-Rojo Cantón Desarrollador Silbon. Todos los derechos reservados.';
+    const drawFooter = () => {
+      doc.fontSize(9).fillColor('#888888');
+      doc.text(footerText, 50, doc.page.height - 50, {
+        align: 'center',
+        width: doc.page.width - 100
+      });
+    };
+    drawFooter();
     // Añadir pie en cada página
     doc.on('pageAdded', drawFooter);
 
@@ -735,16 +746,7 @@ async function generateAndSendMonthlyReport() {
     doc.image(bar, { fit: [500, 300], align: 'center', valign: 'center' });
 
 
-    // Footer profesional
-    const footerText = 'Este informe ha sido generado automáticamente mediante una solución desarrollada por Javier García-Rojo Cantón Desarrollador Silbon. Todos los derechos reservados.';
-    const drawFooter = () => {
-      doc.fontSize(9).fillColor('#888888');
-      doc.text(footerText, 50, doc.page.height - 50, {
-        align: 'center',
-        width: doc.page.width - 100
-      });
-    };
-    drawFooter();
+    
 
 
 
