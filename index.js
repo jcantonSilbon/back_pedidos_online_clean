@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import ExcelJS from 'exceljs';
 import nodemailer from 'nodemailer';
 import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
+import QuickChart from 'quickchart-js';
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
@@ -662,18 +663,28 @@ async function generateAndSendMonthlyReport() {
     await workbook.xlsx.writeFile(excelPath);
 
     // Crear PDF con gráficas
-    const chartCanvas = new ChartJSNodeCanvas({ width: 800, height: 400 });
-    const donut = await chartCanvas.renderToBuffer({
-      type: 'doughnut',
-      data: {
-        labels: ['Sí', 'No'],
-        datasets: [{
-          data: [recibidos, noRecibidos],
-          backgroundColor: ['#36A2EB', '#FF6384']
-        }]
-      },
-      options: { plugins: { legend: { position: 'bottom' } } }
-    });
+const chart = new QuickChart();
+chart.setWidth(800);
+chart.setHeight(400);
+chart.setConfig({
+  type: 'doughnut',
+  data: {
+    labels: ['Sí', 'No'],
+    datasets: [{
+      data: [recibidos, noRecibidos],
+      backgroundColor: ['#36A2EB', '#FF6384']
+    }]
+  },
+  options: {
+    plugins: {
+      legend: {
+        position: 'bottom'
+      }
+    }
+  }
+});
+
+const donut = await chart.toBinary();
 
     const doc = new PDFDocument();
     const pdfPath = `./reporte-pedidos-${Date.now()}.pdf`;
