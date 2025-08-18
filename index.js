@@ -535,7 +535,6 @@ app.get('/api/check-fecha-encuesta', async (req, res) => {
 });
 
 
-// Corregido y maquetado con footer, logo y gráficos bien colocados
 async function generateAndSendMonthlyReport() {
   try {
     const exportRes = await axios.post(`${process.env.BASE_URL}/api/sm-export-tag`);
@@ -642,7 +641,7 @@ async function generateAndSendMonthlyReport() {
     const excelPath = `./reporte-pedidos-${Date.now()}.xlsx`;
     await workbook.xlsx.writeFile(excelPath);
 
-    // Donut chart
+    // Gráfica donut
     const donutChart = new QuickChart();
     donutChart.setWidth(500).setHeight(300);
     donutChart.setConfig({
@@ -670,7 +669,7 @@ async function generateAndSendMonthlyReport() {
     });
     const donut = await donutChart.toBinary();
 
-    // Bar chart
+    // Gráfica de barras por mes
     const monthly = {};
     contacts.forEach(c => {
       const d = new Date(c.fecha_pedido);
@@ -703,12 +702,35 @@ async function generateAndSendMonthlyReport() {
     });
     const bar = await barChart.toBinary();
 
-    // PDF generation
+    // Crear el PDF
     const doc = new PDFDocument();
     const pdfPath = `./reporte-pedidos-${Date.now()}.pdf`;
     doc.pipe(fs.createWriteStream(pdfPath));
 
-    const footerText = 'Este informe ha sido generado automáticamente mediante una solución desarrollada por Javier García-Rojo Cantón - Desarrollador Silbon. Todos los derechos reservados.';
+    // Logo de la empresa
+    const logoUrl = 'https://cdn.shopify.com/s/files/1/0794/1311/7206/files/footer.png?v=1739572304';
+    const logoBuffer = await axios.get(logoUrl, { responseType: 'arraybuffer' }).then(res => res.data);
+    doc.image(logoBuffer, 50, 30, { width: 120 });
+
+    // Rango de fecha (arriba a la derecha)
+      const startOfMonth = new Date(prevYear, prevMonth, 1);
+    const endOfMonth = new Date(prevYear, prevMonth + 1, 0);
+    const formatDate = (date) => date.toLocaleDateString('es-ES');
+    doc.fontSize(10)
+      .text(`Rango de fechas: ${formatDate(startOfMonth)} a ${formatDate(endOfMonth)}`, 400, 40, { align: 'right' });
+
+    // Título centrado
+    doc.fontSize(18).text('Informe mensual de pedidos', 0, 100, { align: 'center' });
+
+    // Datos generales
+    doc.moveDown();
+    doc.fontSize(12);
+    doc.text(`Respuestas formulario: ${totalPedidos}`);
+    doc.text(`Recibidos: ${recibidos}`);
+    doc.text(`No recibidos: ${noRecibidos}`);
+
+    // Footer profesional
+    const footerText = 'Este informe ha sido generado automáticamente mediante una solución desarrollada por Javier García-Rojo Cantón. Todos los derechos reservados.';
     const drawFooter = () => {
       doc.fontSize(9).fillColor('#888888');
       doc.text(footerText, 50, doc.page.height - 50, {
@@ -716,31 +738,11 @@ async function generateAndSendMonthlyReport() {
         width: doc.page.width - 100
       });
     };
+    drawFooter();
+
+    // Añadir pie en cada página
     doc.on('pageAdded', drawFooter);
 
-    const logoUrl = 'https://cdn.shopify.com/s/files/1/0794/1311/7206/files/footer.png?v=1739572304';
-    const logoBuffer = await axios.get(logoUrl, { responseType: 'arraybuffer' }).then(res => res.data);
-    doc.image(logoBuffer, 50, 30, { width: 120 });
-
-    const startOfMonth = new Date(prevYear, prevMonth, 1);
-    const endOfMonth = new Date(prevYear, prevMonth + 1, 0);
-    const formatDate = (date) => date.toLocaleDateString('es-ES');
-    doc.fontSize(10)
-      .text(`Rango de fechas: ${formatDate(startOfMonth)} a ${formatDate(endOfMonth)}`, 400, 40, { align: 'right' });
-
-    doc.fontSize(18).text('Informe mensual de pedidos', 0, 100, { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(12);
-    doc.text(`Respuestas formulario: ${totalPedidos}`);
-    doc.text(`Recibidos: ${recibidos}`);
-    doc.text(`No recibidos: ${noRecibidos}`);
-
-    doc.moveDown();
-    doc.image(donut, { fit: [450, 300], align: 'center' });
-    doc.moveDown();
-    doc.image(bar, { fit: [500, 300], align: 'center' });
-
-    drawFooter();
     doc.end();
 
     const transporter = nodemailer.createTransport({
@@ -767,7 +769,6 @@ async function generateAndSendMonthlyReport() {
     console.error('❌ Error en generateAndSendMonthlyReport:', err);
   }
 }
-
 
 // CRON cada mes el día 1 a las 9:00
 cron.schedule('0 9 1 * *', generateAndSendMonthlyReport);
