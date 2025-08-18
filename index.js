@@ -713,8 +713,8 @@ async function generateAndSendMonthlyReport() {
     doc.image(logoBuffer, 50, 30, { width: 120 });
 
     // Rango de fecha (arriba a la derecha)
-    const startOfMonth = new Date(anioAnterior, mesAnterior, 1);
-    const endOfMonth = new Date(anioAnterior, mesAnterior + 1, 0);
+      const startOfMonth = new Date(prevYear, prevMonth, 1);
+    const endOfMonth = new Date(prevYear, prevMonth + 1, 0);
     const formatDate = (date) => date.toLocaleDateString('es-ES');
     doc.fontSize(10)
       .text(`Rango de fechas: ${formatDate(startOfMonth)} a ${formatDate(endOfMonth)}`, 400, 40, { align: 'right' });
