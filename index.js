@@ -735,10 +735,21 @@ async function generateAndSendMonthlyReport() {
 
     // Footer profesional justo antes de terminar
     const footerText = 'Este informe ha sido generado automáticamente mediante una solución desarrollada por Javier García-Rojo Cantón, Desarrollador en Silbon. Todos los derechos reservados.';
-    doc.fontSize(9).fillColor('#888888').text(footerText, 50, 820, {
+
+    const FOOTER_HEIGHT = 40;
+    const MARGIN_BOTTOM = 50;
+    const currentY = doc.y;
+
+    // Si no hay espacio para el footer, crea una nueva página
+    if (currentY + FOOTER_HEIGHT + MARGIN_BOTTOM > doc.page.height) {
+      doc.addPage();
+    }
+
+    doc.fontSize(9).fillColor('#888888').text(footerText, 50, doc.page.height - MARGIN_BOTTOM, {
       align: 'center',
       width: doc.page.width - 100
     });
+
 
     doc.end();
 
