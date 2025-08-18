@@ -706,6 +706,8 @@ async function generateAndSendMonthlyReport() {
     const doc = new PDFDocument();
     const pdfPath = `./reporte-pedidos-${Date.now()}.pdf`;
     doc.pipe(fs.createWriteStream(pdfPath));
+    // Añadir pie en cada página
+    doc.on('pageAdded', drawFooter);
 
     // Logo de la empresa
     const logoUrl = 'https://cdn.shopify.com/s/files/1/0794/1311/7206/files/footer.png?v=1739572304';
@@ -713,7 +715,7 @@ async function generateAndSendMonthlyReport() {
     doc.image(logoBuffer, 50, 30, { width: 120 });
 
     // Rango de fecha (arriba a la derecha)
-      const startOfMonth = new Date(prevYear, prevMonth, 1);
+    const startOfMonth = new Date(prevYear, prevMonth, 1);
     const endOfMonth = new Date(prevYear, prevMonth + 1, 0);
     const formatDate = (date) => date.toLocaleDateString('es-ES');
     doc.fontSize(10)
@@ -728,6 +730,10 @@ async function generateAndSendMonthlyReport() {
     doc.text(`Respuestas formulario: ${totalPedidos}`);
     doc.text(`Recibidos: ${recibidos}`);
     doc.text(`No recibidos: ${noRecibidos}`);
+    doc.image(donut, { fit: [450, 300], align: 'center', valign: 'center' });
+    doc.moveDown();
+    doc.image(bar, { fit: [500, 300], align: 'center', valign: 'center' });
+
 
     // Footer profesional
     const footerText = 'Este informe ha sido generado automáticamente mediante una solución desarrollada por Javier García-Rojo Cantón Desarrollador Silbon. Todos los derechos reservados.';
@@ -740,8 +746,7 @@ async function generateAndSendMonthlyReport() {
     };
     drawFooter();
 
-    // Añadir pie en cada página
-    doc.on('pageAdded', drawFooter);
+
 
     doc.end();
 
