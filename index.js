@@ -597,8 +597,10 @@ async function generateAndSendMonthlyReport() {
     }
 
     const hoy = new Date();
-    const mesAnterior = hoy.getMonth() === 0 ? 11 : hoy.getMonth() - 1;
-    const anioAnterior = hoy.getMonth() === 0 ? hoy.getFullYear() - 1 : hoy.getFullYear();
+    const currentMonth = hoy.getMonth();
+    const currentYear = hoy.getFullYear();
+    const mesAnterior = currentMonth === 0 ? 11 : currentMonth - 1;
+    const anioAnterior = currentMonth === 0 ? currentYear - 1 : currentYear;
 
     function parseFechaEuropea(str) {
       const [dd, mm, yyyy] = str.split('/');
@@ -611,10 +613,8 @@ async function generateAndSendMonthlyReport() {
       return d.getMonth() === mesAnterior && d.getFullYear() === anioAnterior;
     });
 
-    // Crear Excel
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Pedidos');
-
     worksheet.columns = [
       { header: 'Email', key: 'email', width: 30 },
       { header: 'Nº Pedido', key: 'num_pedido', width: 15 },
@@ -662,43 +662,34 @@ async function generateAndSendMonthlyReport() {
     const excelPath = `./reporte-pedidos-${Date.now()}.xlsx`;
     await workbook.xlsx.writeFile(excelPath);
 
-    // Crear PDF con gráficas
-const chart = new QuickChart();
-chart.setWidth(800);
-chart.setHeight(400);
-chart.setConfig({
-  type: 'doughnut',
-  data: {
-    labels: [`Sí (${recibidos} - ${((recibidos / total) * 100).toFixed(1)}%)`, `No (${noRecibidos} - ${((noRecibidos / total) * 100).toFixed(1)}%)`],
-    
-    datasets: [{
-      data: [recibidos, noRecibidos],
-      backgroundColor: ['#36A2EB', '#FF6384']
-    }]
-  },
-  options: {
-      plugins: {
-        legend: { position: 'top' },
-        datalabels: {
-          color: '#000',
-          font: { weight: 'bold' },
-          formatter: (value, ctx) => {
-            const percentage = ((value / total) * 100).toFixed(1);
-            return `${value} (${percentage}%)`;
+    const chart = new QuickChart();
+    chart.setWidth(800);
+    chart.setHeight(400);
+    chart.setConfig({
+      type: 'doughnut',
+      data: {
+        labels: [
+          `Sí (${recibidos} - ${((recibidos / totalPedidos) * 100).toFixed(1)}%)`,
+          `No (${noRecibidos} - ${((noRecibidos / totalPedidos) * 100).toFixed(1)}%)`
+        ],
+        datasets: [{
+          data: [recibidos, noRecibidos],
+          backgroundColor: ['#36A2EB', '#FF6384']
+        }]
+      },
+      options: {
+        plugins: {
+          legend: { position: 'top' },
+          datalabels: {
+            color: '#000',
+            font: { weight: 'bold' },
+            formatter: (value, ctx) => `${value} (${((value / totalPedidos) * 100).toFixed(1)}%)`
           }
         }
       }
-  }
-});
-const startOfMonth = new Date(currentYear, currentMonth - 1, 1);
-const endOfMonth = new Date(currentYear, currentMonth, 0);
-const formatDate = (date) => date.toLocaleDateString('es-ES');
+    });
 
-doc.text(`Rango de fechas: ${formatDate(startOfMonth)} a ${formatDate(endOfMonth)}`, 50, 140);
-
-
-const donut = await chart.toBinary();
-
+    const donut = await chart.toBinary();
     const doc = new PDFDocument();
     const pdfPath = `./reporte-pedidos-${Date.now()}.pdf`;
     doc.pipe(fs.createWriteStream(pdfPath));
@@ -709,10 +700,15 @@ const donut = await chart.toBinary();
     doc.text(`Recibidos: ${recibidos}`);
     doc.text(`No recibidos: ${noRecibidos}`);
     doc.text(`Media días entrega: ${totalConEncuesta ? (sumaDias / totalConEncuesta).toFixed(1) : 'N/A'}`);
+
+    const startOfMonth = new Date(currentYear, currentMonth - 1, 1);
+    const endOfMonth = new Date(currentYear, currentMonth, 0);
+    const formatDate = (date) => date.toLocaleDateString('es-ES');
+    doc.text(`Rango de fechas: ${formatDate(startOfMonth)} a ${formatDate(endOfMonth)}`);
+
     doc.image(donut, { fit: [500, 300], align: 'center' });
     doc.end();
 
-    // Enviar email
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: parseInt(process.env.SMTP_PORT, 10),
@@ -737,6 +733,7 @@ const donut = await chart.toBinary();
     console.error('❌ Error en generateAndSendMonthlyReport:', err);
   }
 }
+
 
 // CRON cada mes el día 1 a las 9:00
 cron.schedule('0 9 1 * *', generateAndSendMonthlyReport);
