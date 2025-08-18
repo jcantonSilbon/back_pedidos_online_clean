@@ -706,13 +706,7 @@ async function generateAndSendMonthlyReport() {
     const pdfPath = `./reporte-pedidos-${Date.now()}.pdf`;
     doc.pipe(fs.createWriteStream(pdfPath));
 
-    // Cargar el logo desde URL
-    const logoUrl = 'https://cdn.shopify.com/s/files/1/0794/1311/7206/files/footer.png?v=1739572304';
-    const logoBuffer = await axios.get(logoUrl, { responseType: 'arraybuffer' }).then(res => res.data);
-
-    doc.image(logoBuffer, 50, 30, { width: 120 });
-
-
+    
     doc.fontSize(18).text('Informe mensual de pedidos', { align: 'center' }).moveDown();
     doc.fontSize(12).text(`Respuestas formulario: ${totalPedidos}`);
     doc.text(`Recibidos: ${recibidos}`);
@@ -723,8 +717,6 @@ async function generateAndSendMonthlyReport() {
     doc.moveDown().text(`Rango de fechas: ${startOfMonth.toLocaleDateString('es-ES')} a ${endOfMonth.toLocaleDateString('es-ES')}`);
     doc.moveDown().image(donut, { fit: [500, 300], align: 'center' }).moveDown();
     doc.image(bar, { fit: [500, 300], align: 'center' });
-
-    
     doc.end();
 
     const transporter = nodemailer.createTransport({
