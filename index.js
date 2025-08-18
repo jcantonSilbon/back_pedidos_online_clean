@@ -582,14 +582,10 @@ async function generateAndSendMonthlyReport() {
     const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
     const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
 
-    const formatDate = (date) => date.toLocaleDateString('es-ES');
-    const startOfMonth = new Date(prevYear, prevMonth, 1);
-    const endOfMonth = new Date(prevYear, prevMonth + 1, 0);
-
-    const parseFecha = (str) => {
+    function parseFecha(str) {
       const [dd, mm, yyyy] = str.split('/');
       return new Date(`${yyyy}-${mm}-${dd}`);
-    };
+    }
 
     const filteredContacts = contacts.filter(c => {
       if (!c.fecha_pedido) return false;
@@ -645,21 +641,35 @@ async function generateAndSendMonthlyReport() {
     const excelPath = `./reporte-pedidos-${Date.now()}.xlsx`;
     await workbook.xlsx.writeFile(excelPath);
 
-    // Charts
+    // Gráfica donut
     const donutChart = new QuickChart();
     donutChart.setWidth(500).setHeight(300);
     donutChart.setConfig({
       type: 'doughnut',
       data: {
         labels: [`Sí (${recibidos})`, `No (${noRecibidos})`],
-        datasets: [{ data: [recibidos, noRecibidos], backgroundColor: ['#36A2EB', '#FF6384'] }]
+        datasets: [{
+          data: [recibidos, noRecibidos],
+          backgroundColor: ['#36A2EB', '#FF6384']
+        }]
       },
       options: {
-        plugins: { legend: { position: 'top' } }
+        plugins: {
+          legend: { position: 'top' },
+          datalabels: {
+            display: true,
+            formatter: (value, ctx) => {
+              const total = ctx.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+              const pct = ((value / total) * 100).toFixed(1);
+              return `${value} (${pct}%)`;
+            }
+          }
+        }
       }
     });
     const donut = await donutChart.toBinary();
 
+    // Gráfica de barras por mes
     const monthly = {};
     contacts.forEach(c => {
       const d = new Date(c.fecha_pedido);
@@ -681,44 +691,58 @@ async function generateAndSendMonthlyReport() {
         ]
       },
       options: {
-        plugins: { legend: { position: 'top' } },
-        scales: { x: { stacked: true }, y: { beginAtZero: true } }
+        plugins: {
+          legend: { position: 'top' }
+        },
+        scales: {
+          x: { stacked: true },
+          y: { beginAtZero: true }
+        }
       }
     });
     const bar = await barChart.toBinary();
 
-    // PDF
+    // Crear el PDF
     const doc = new PDFDocument();
     const pdfPath = `./reporte-pedidos-${Date.now()}.pdf`;
     doc.pipe(fs.createWriteStream(pdfPath));
 
-    const footerText = 'Este informe ha sido generado automáticamente mediante una solución desarrollada por Javier García-Rojo Cantón. Todos los derechos reservados.';
-    const drawFooter = () => {
-      doc.fontSize(9).fillColor('#888888');
-      doc.text(footerText, 50, doc.page.height - 50, { align: 'center', width: doc.page.width - 100 });
-    };
-    doc.on('pageAdded', drawFooter);
-
+    // Logo de la empresa
     const logoUrl = 'https://cdn.shopify.com/s/files/1/0794/1311/7206/files/footer.png?v=1739572304';
     const logoBuffer = await axios.get(logoUrl, { responseType: 'arraybuffer' }).then(res => res.data);
     doc.image(logoBuffer, 50, 30, { width: 120 });
-    doc.fontSize(10).text(`Rango de fechas: ${formatDate(startOfMonth)} a ${formatDate(endOfMonth)}`, 400, 40, { align: 'right' });
 
+    // Rango de fecha (arriba a la derecha)
+      const startOfMonth = new Date(prevYear, prevMonth, 1);
+    const endOfMonth = new Date(prevYear, prevMonth + 1, 0);
+    const formatDate = (date) => date.toLocaleDateString('es-ES');
+    doc.fontSize(10)
+      .text(`Rango de fechas: ${formatDate(startOfMonth)} a ${formatDate(endOfMonth)}`, 400, 40, { align: 'right' });
+
+    // Título centrado
     doc.fontSize(18).text('Informe mensual de pedidos', 0, 100, { align: 'center' });
+
+    // Datos generales
     doc.moveDown();
     doc.fontSize(12);
     doc.text(`Respuestas formulario: ${totalPedidos}`);
     doc.text(`Recibidos: ${recibidos}`);
     doc.text(`No recibidos: ${noRecibidos}`);
 
-    if (doc.y + 300 > doc.page.height - 100) doc.addPage();
-    doc.image(donut, { fit: [450, 300], align: 'center' });
-    doc.moveDown();
-
-    if (doc.y + 300 > doc.page.height - 100) doc.addPage();
-    doc.image(bar, { fit: [500, 300], align: 'center' });
-
+    // Footer profesional
+    const footerText = 'Este informe ha sido generado automáticamente mediante una solución desarrollada por Javier García-Rojo Cantón. Todos los derechos reservados.';
+    const drawFooter = () => {
+      doc.fontSize(9).fillColor('#888888');
+      doc.text(footerText, 50, doc.page.height - 50, {
+        align: 'center',
+        width: doc.page.width - 100
+      });
+    };
     drawFooter();
+
+    // Añadir pie en cada página
+    doc.on('pageAdded', drawFooter);
+
     doc.end();
 
     const transporter = nodemailer.createTransport({
