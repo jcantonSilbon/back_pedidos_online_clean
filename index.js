@@ -5,6 +5,8 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import ExcelJS from 'exceljs';
 import nodemailer from 'nodemailer';
+import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
+import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
 import cron from 'node-cron';
@@ -529,6 +531,196 @@ app.get('/api/check-fecha-encuesta', async (req, res) => {
     console.error('❌ Error:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+
+async function generateAndSendMonthlyReport() {
+  try {
+    const exportRes = await axios.post(`${process.env.BASE_URL}/api/sm-export-tag`);
+    const requestId = exportRes.data?.requestId;
+    if (!requestId) throw new Error('❌ No se recibió requestId');
+
+    console.log(`📤 Exportación solicitada. requestId: ${requestId}`);
+    console.log('⏳ Esperando archivo...');
+
+    const retries = 10;
+    const delay = 10000;
+    let contacts = [];
+
+    for (let i = 0; i < retries; i++) {
+      console.log(`🔁 Intento ${i + 1}/${retries}...`);
+      try {
+        const resDownload = await axios.get(`${process.env.BASE_URL}/api/sm-export-download/${requestId}`);
+        const rawData = resDownload.data;
+
+        const result = rawData.map((item) => {
+          const contactId = Object.keys(item)[0];
+          const data = item[contactId];
+          const email = data.contactData?.email || '';
+
+          const contactProps = {
+            email,
+            num_pedido: '',
+            fecha_pedido: '',
+            fecha_encuesta: '',
+            pedidoRecibido: '',
+            problemas: '',
+            recogidaPedido: '',
+            todoCorrecto: ''
+          };
+
+          const propsArray = data.contactPropertiesData || [];
+          for (const prop of propsArray) {
+            if (prop.name in contactProps) {
+              contactProps[prop.name] = prop.value || '';
+            }
+          }
+
+          return contactProps;
+        });
+
+        if (result.length > 0) {
+          contacts = result;
+          break;
+        }
+
+      } catch (err) {
+        console.warn('⚠️ Error en el intento:', err.message);
+      }
+
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+
+    if (contacts.length === 0) {
+      throw new Error('⛔ No se pudo obtener el archivo después de varios intentos');
+    }
+
+    const hoy = new Date();
+    const mesAnterior = hoy.getMonth() === 0 ? 11 : hoy.getMonth() - 1;
+    const anioAnterior = hoy.getMonth() === 0 ? hoy.getFullYear() - 1 : hoy.getFullYear();
+
+    function parseFechaEuropea(str) {
+      const [dd, mm, yyyy] = str.split('/');
+      return new Date(`${yyyy}-${mm}-${dd}`);
+    }
+
+    const filteredContacts = contacts.filter(c => {
+      if (!c.fecha_pedido) return false;
+      const d = new Date(c.fecha_pedido);
+      return d.getMonth() === mesAnterior && d.getFullYear() === anioAnterior;
+    });
+
+    // Crear Excel
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Pedidos');
+
+    worksheet.columns = [
+      { header: 'Email', key: 'email', width: 30 },
+      { header: 'Nº Pedido', key: 'num_pedido', width: 15 },
+      { header: 'Fecha Pedido', key: 'fecha_pedido', width: 20 },
+      { header: 'Fecha Encuesta', key: 'fecha_encuesta', width: 20 },
+      { header: 'Días de entrega', key: 'dias_entrega', width: 18 },
+      { header: 'Pedido Recibido', key: 'pedidoRecibido', width: 20 },
+      { header: 'Problemas', key: 'problemas', width: 20 },
+      { header: 'Recogida Pedido', key: 'recogidaPedido', width: 20 },
+      { header: 'Todo Correcto', key: 'todoCorrecto', width: 20 }
+    ];
+
+    let totalPedidos = 0, recibidos = 0, noRecibidos = 0, sumaDias = 0, totalConEncuesta = 0;
+
+    for (const contact of filteredContacts) {
+      const fechaPedido = contact.fecha_pedido;
+      const fechaEncuesta = contact.fecha_encuesta;
+      let dias_entrega = '';
+      let retraso = false;
+
+      if (fechaPedido && fechaEncuesta) {
+        const fechaPedidoDate = new Date(fechaPedido);
+        const fechaEncuestaDate = fechaEncuesta.includes('/') ? parseFechaEuropea(fechaEncuesta) : new Date(fechaEncuesta);
+        const diff = (fechaEncuestaDate - fechaPedidoDate) / (1000 * 60 * 60 * 24);
+        dias_entrega = Math.floor(diff);
+        sumaDias += dias_entrega;
+        totalConEncuesta++;
+        if (dias_entrega > 7) retraso = true;
+      }
+
+      const row = worksheet.addRow({ ...contact, dias_entrega });
+
+      if (contact.pedidoRecibido === 'no') noRecibidos++;
+      if (contact.pedidoRecibido === 'si') recibidos++;
+      totalPedidos++;
+
+      if (contact.pedidoRecibido === 'no' || contact.problemas === 'sí' || retraso) {
+        row.eachCell(cell => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0000' } };
+          cell.font = { color: { argb: 'FFFFFF' } };
+        });
+      }
+    }
+
+    const excelPath = `./reporte-pedidos-${Date.now()}.xlsx`;
+    await workbook.xlsx.writeFile(excelPath);
+
+    // Crear PDF con gráficas
+    const chartCanvas = new ChartJSNodeCanvas({ width: 800, height: 400 });
+    const donut = await chartCanvas.renderToBuffer({
+      type: 'doughnut',
+      data: {
+        labels: ['Sí', 'No'],
+        datasets: [{
+          data: [recibidos, noRecibidos],
+          backgroundColor: ['#36A2EB', '#FF6384']
+        }]
+      },
+      options: { plugins: { legend: { position: 'bottom' } } }
+    });
+
+    const doc = new PDFDocument();
+    const pdfPath = `./reporte-pedidos-${Date.now()}.pdf`;
+    doc.pipe(fs.createWriteStream(pdfPath));
+
+    doc.fontSize(18).text('Informe mensual de pedidos', { align: 'center' });
+    doc.moveDown();
+    doc.fontSize(12).text(`Total pedidos: ${totalPedidos}`);
+    doc.text(`Recibidos: ${recibidos}`);
+    doc.text(`No recibidos: ${noRecibidos}`);
+    doc.text(`Media días entrega: ${totalConEncuesta ? (sumaDias / totalConEncuesta).toFixed(1) : 'N/A'}`);
+    doc.image(donut, { fit: [500, 300], align: 'center' });
+    doc.end();
+
+    // Enviar email
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT, 10),
+      secure: false,
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      tls: { ciphers: 'SSLv3', rejectUnauthorized: false }
+    });
+
+    await transporter.sendMail({
+      from: process.env.SMTP_USER,
+      to: 'jcanton@silbon.es',
+      subject: '📦 Informe mensual de pedidos - Salesmanago',
+      text: 'Adjunto Excel y PDF con el resumen de pedidos del mes anterior.',
+      attachments: [
+        { filename: path.basename(excelPath), path: excelPath },
+        { filename: path.basename(pdfPath), path: pdfPath }
+      ]
+    });
+
+    console.log('📧 Informe mensual enviado correctamente');
+  } catch (err) {
+    console.error('❌ Error en generateAndSendMonthlyReport:', err);
+  }
+}
+
+// CRON cada mes el día 1 a las 9:00
+cron.schedule('0 9 1 * *', generateAndSendMonthlyReport);
+
+// Ruta manual para lanzar el informe mensual
+app.get('/api/test-monthly-report', async (req, res) => {
+  await generateAndSendMonthlyReport();
+  res.send('✅ Informe mensual generado y enviado');
 });
 
 
