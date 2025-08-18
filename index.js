@@ -541,15 +541,11 @@ async function generateAndSendMonthlyReport() {
     const requestId = exportRes.data?.requestId;
     if (!requestId) throw new Error('❌ No se recibió requestId');
 
-    console.log(`📤 Exportación solicitada. requestId: ${requestId}`);
-    console.log('⏳ Esperando archivo...');
-
     const retries = 10;
     const delay = 10000;
     let contacts = [];
 
     for (let i = 0; i < retries; i++) {
-      console.log(`🔁 Intento ${i + 1}/${retries}...`);
       try {
         const resDownload = await axios.get(`${process.env.BASE_URL}/api/sm-export-download/${requestId}`);
         const rawData = resDownload.data;
@@ -558,51 +554,35 @@ async function generateAndSendMonthlyReport() {
           const contactId = Object.keys(item)[0];
           const data = item[contactId];
           const email = data.contactData?.email || '';
-
-          const contactProps = {
-            email,
-            num_pedido: '',
-            fecha_pedido: '',
-            fecha_encuesta: '',
-            pedidoRecibido: '',
-            problemas: '',
-            recogidaPedido: '',
-            todoCorrecto: ''
+          const props = {
+            email, num_pedido: '', fecha_pedido: '', fecha_encuesta: '',
+            pedidoRecibido: '', problemas: '', recogidaPedido: '', todoCorrecto: ''
           };
-
-          const propsArray = data.contactPropertiesData || [];
-          for (const prop of propsArray) {
-            if (prop.name in contactProps) {
-              contactProps[prop.name] = prop.value || '';
-            }
+          for (const p of data.contactPropertiesData || []) {
+            if (p.name in props) props[p.name] = p.value || '';
           }
-
-          return contactProps;
+          return props;
         });
 
         if (result.length > 0) {
           contacts = result;
           break;
         }
-
       } catch (err) {
-        console.warn('⚠️ Error en el intento:', err.message);
+        console.warn(`⚠️ Intento ${i + 1} fallido: ${err.message}`);
       }
-
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await new Promise(res => setTimeout(res, delay));
     }
 
-    if (contacts.length === 0) {
-      throw new Error('⛔ No se pudo obtener el archivo después de varios intentos');
-    }
+    if (contacts.length === 0) throw new Error('⛔ No se pudo obtener el archivo');
 
     const hoy = new Date();
     const currentMonth = hoy.getMonth();
     const currentYear = hoy.getFullYear();
-    const mesAnterior = currentMonth === 0 ? 11 : currentMonth - 1;
-    const anioAnterior = currentMonth === 0 ? currentYear - 1 : currentYear;
+    const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+    const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
 
-    function parseFechaEuropea(str) {
+    function parseFecha(str) {
       const [dd, mm, yyyy] = str.split('/');
       return new Date(`${yyyy}-${mm}-${dd}`);
     }
@@ -610,9 +590,10 @@ async function generateAndSendMonthlyReport() {
     const filteredContacts = contacts.filter(c => {
       if (!c.fecha_pedido) return false;
       const d = new Date(c.fecha_pedido);
-      return d.getMonth() === mesAnterior && d.getFullYear() === anioAnterior;
+      return d.getMonth() === prevMonth && d.getFullYear() === prevYear;
     });
 
+    // Excel
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Pedidos');
     worksheet.columns = [
@@ -629,29 +610,27 @@ async function generateAndSendMonthlyReport() {
 
     let totalPedidos = 0, recibidos = 0, noRecibidos = 0, sumaDias = 0, totalConEncuesta = 0;
 
-    for (const contact of filteredContacts) {
-      const fechaPedido = contact.fecha_pedido;
-      const fechaEncuesta = contact.fecha_encuesta;
+    for (const c of filteredContacts) {
       let dias_entrega = '';
       let retraso = false;
 
-      if (fechaPedido && fechaEncuesta) {
-        const fechaPedidoDate = new Date(fechaPedido);
-        const fechaEncuestaDate = fechaEncuesta.includes('/') ? parseFechaEuropea(fechaEncuesta) : new Date(fechaEncuesta);
-        const diff = (fechaEncuestaDate - fechaPedidoDate) / (1000 * 60 * 60 * 24);
-        dias_entrega = Math.floor(diff);
-        sumaDias += dias_entrega;
+      if (c.fecha_pedido && c.fecha_encuesta) {
+        const d1 = new Date(c.fecha_pedido);
+        const d2 = c.fecha_encuesta.includes('/') ? parseFecha(c.fecha_encuesta) : new Date(c.fecha_encuesta);
+        const diff = Math.floor((d2 - d1) / (1000 * 60 * 60 * 24));
+        dias_entrega = diff;
+        sumaDias += diff;
         totalConEncuesta++;
-        if (dias_entrega > 7) retraso = true;
+        if (diff > 7) retraso = true;
       }
 
-      const row = worksheet.addRow({ ...contact, dias_entrega });
+      const row = worksheet.addRow({ ...c, dias_entrega });
 
-      if (contact.pedidoRecibido === 'no') noRecibidos++;
-      if (contact.pedidoRecibido === 'si') recibidos++;
+      if (c.pedidoRecibido === 'no') noRecibidos++;
+      if (c.pedidoRecibido === 'si') recibidos++;
       totalPedidos++;
 
-      if (contact.pedidoRecibido === 'no' || contact.problemas === 'sí' || retraso) {
+      if (c.pedidoRecibido === 'no' || c.problemas === 'sí' || retraso) {
         row.eachCell(cell => {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0000' } };
           cell.font = { color: { argb: 'FFFFFF' } };
@@ -662,16 +641,13 @@ async function generateAndSendMonthlyReport() {
     const excelPath = `./reporte-pedidos-${Date.now()}.xlsx`;
     await workbook.xlsx.writeFile(excelPath);
 
-    const chart = new QuickChart();
-    chart.setWidth(800);
-    chart.setHeight(400);
-    chart.setConfig({
+    // Gráfica donut
+    const donutChart = new QuickChart();
+    donutChart.setWidth(500).setHeight(300);
+    donutChart.setConfig({
       type: 'doughnut',
       data: {
-        labels: [
-          `Sí (${recibidos} - ${((recibidos / totalPedidos) * 100).toFixed(1)}%)`,
-          `No (${noRecibidos} - ${((noRecibidos / totalPedidos) * 100).toFixed(1)}%)`
-        ],
+        labels: [`Sí (${recibidos})`, `No (${noRecibidos})`],
         datasets: [{
           data: [recibidos, noRecibidos],
           backgroundColor: ['#36A2EB', '#FF6384']
@@ -681,40 +657,74 @@ async function generateAndSendMonthlyReport() {
         plugins: {
           legend: { position: 'top' },
           datalabels: {
-            color: '#000',
-            font: { weight: 'bold' },
-            formatter: (value, ctx) => `${value} (${((value / totalPedidos) * 100).toFixed(1)}%)`
+            display: true,
+            formatter: (value, ctx) => {
+              const total = ctx.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+              const pct = ((value / total) * 100).toFixed(1);
+              return `${value} (${pct}%)`;
+            }
           }
         }
       }
     });
+    const donut = await donutChart.toBinary();
 
-    const donut = await chart.toBinary();
+    // Gráfica de barras por mes
+    const monthly = {};
+    contacts.forEach(c => {
+      const d = new Date(c.fecha_pedido);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (!monthly[key]) monthly[key] = { si: 0, no: 0 };
+      if (c.pedidoRecibido === 'si') monthly[key].si++;
+      if (c.pedidoRecibido === 'no') monthly[key].no++;
+    });
+
+    const barChart = new QuickChart();
+    barChart.setWidth(800).setHeight(300);
+    barChart.setConfig({
+      type: 'bar',
+      data: {
+        labels: Object.keys(monthly),
+        datasets: [
+          { label: 'Sí', data: Object.values(monthly).map(x => x.si), backgroundColor: '#36A2EB' },
+          { label: 'No', data: Object.values(monthly).map(x => x.no), backgroundColor: '#FF6384' }
+        ]
+      },
+      options: {
+        plugins: {
+          legend: { position: 'top' }
+        },
+        scales: {
+          x: { stacked: true },
+          y: { beginAtZero: true }
+        }
+      }
+    });
+    const bar = await barChart.toBinary();
+
     const doc = new PDFDocument();
     const pdfPath = `./reporte-pedidos-${Date.now()}.pdf`;
     doc.pipe(fs.createWriteStream(pdfPath));
 
-    doc.fontSize(18).text('Informe mensual de pedidos', { align: 'center' });
-    doc.moveDown();
+    doc.fontSize(18).text('Informe mensual de pedidos', { align: 'center' }).moveDown();
     doc.fontSize(12).text(`Total pedidos: ${totalPedidos}`);
     doc.text(`Recibidos: ${recibidos}`);
     doc.text(`No recibidos: ${noRecibidos}`);
     doc.text(`Media días entrega: ${totalConEncuesta ? (sumaDias / totalConEncuesta).toFixed(1) : 'N/A'}`);
 
-    const startOfMonth = new Date(currentYear, currentMonth - 1, 1);
-    const endOfMonth = new Date(currentYear, currentMonth, 0);
-    const formatDate = (date) => date.toLocaleDateString('es-ES');
-    doc.text(`Rango de fechas: ${formatDate(startOfMonth)} a ${formatDate(endOfMonth)}`);
-
-    doc.image(donut, { fit: [500, 300], align: 'center' });
+    const startOfMonth = new Date(prevYear, prevMonth, 1);
+    const endOfMonth = new Date(prevYear, prevMonth + 1, 0);
+    doc.moveDown().text(`Rango de fechas: ${startOfMonth.toLocaleDateString('es-ES')} a ${endOfMonth.toLocaleDateString('es-ES')}`);
+    doc.moveDown().image(donut, { fit: [500, 300], align: 'center' }).moveDown();
+    doc.image(bar, { fit: [500, 300], align: 'center' });
     doc.end();
 
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT, 10),
+      port: parseInt(process.env.SMTP_PORT),
       secure: false,
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-      tls: { ciphers: 'SSLv3', rejectUnauthorized: false }
+      tls: { rejectUnauthorized: false }
     });
 
     await transporter.sendMail({
@@ -733,7 +743,6 @@ async function generateAndSendMonthlyReport() {
     console.error('❌ Error en generateAndSendMonthlyReport:', err);
   }
 }
-
 
 // CRON cada mes el día 1 a las 9:00
 cron.schedule('0 9 1 * *', generateAndSendMonthlyReport);
