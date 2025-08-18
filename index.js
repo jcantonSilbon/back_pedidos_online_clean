@@ -730,7 +730,7 @@ async function generateAndSendMonthlyReport() {
     doc.text(`No recibidos: ${noRecibidos}`);
 
     // Footer profesional
-    const footerText = 'Este informe ha sido generado automáticamente mediante una solución desarrollada por Javier García-Rojo Cantón. Todos los derechos reservados.';
+    const footerText = 'Este informe ha sido generado automáticamente mediante una solución desarrollada por Javier García-Rojo Cantón Desarrollador Silbon. Todos los derechos reservados.';
     const drawFooter = () => {
       doc.fontSize(9).fillColor('#888888');
       doc.text(footerText, 50, doc.page.height - 50, {
