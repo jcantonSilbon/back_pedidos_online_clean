@@ -722,35 +722,26 @@ async function generateAndSendMonthlyReport() {
       { align: 'right', width: 150 }
     );
 
-    // Espacio tras cabecera
-    doc.moveDown().moveDown().moveDown().moveDown();
-
-    // Título centrado
-    doc.fontSize(18).text('Informe mensual de pedidos', { align: 'center' }).moveDown();
-    doc.fontSize(12).text(`Respuestas formulario: ${totalPedidos}`);
-    doc.text(`Recibidos: ${recibidos}`);
-    doc.text(`No recibidos: ${noRecibidos}`);
+    // Información principal (centrado)
+    doc.fontSize(18).text('Informe mensual de pedidos', 50, 100, { align: 'center', width: 500 });
+    doc.fontSize(12)
+      .text(`Respuestas formulario: ${totalPedidos}`, 50, 130)
+      .text(`Recibidos: ${recibidos}`)
+      .text(`No recibidos: ${noRecibidos}`);
 
     // Gráficas
-    doc.moveDown().image(donut, { fit: [500, 300], align: 'center' }).moveDown();
-    doc.image(bar, { fit: [500, 300], align: 'center' });
+    doc.image(donut, 50, 180, { fit: [500, 300] });
+    doc.image(bar, 50, 500, { fit: [500, 300] });
 
-    // Footer profesional en cada página
-    const footerText =
-      'Este informe ha sido generado automáticamente mediante una solución desarrollada por Javier García-Rojo Cantón, Desarrollador en Silbon. Todos los derechos reservados.';
-
-    const drawFooter = () => {
-      doc.fontSize(9).fillColor('#888888');
-      doc.text(footerText, 50, doc.page.height - 50, {
-        align: 'center',
-        width: doc.page.width - 100
-      });
-    };
-
-    drawFooter(); // Primera página
-    doc.on('pageAdded', drawFooter); // Siguientes
+    // Footer profesional justo antes de terminar
+    const footerText = 'Este informe ha sido generado automáticamente mediante una solución desarrollada por Javier García-Rojo Cantón, Desarrollador en Silbon. Todos los derechos reservados.';
+    doc.fontSize(9).fillColor('#888888').text(footerText, 50, 820, {
+      align: 'center',
+      width: doc.page.width - 100
+    });
 
     doc.end();
+
 
 
     const transporter = nodemailer.createTransport({
