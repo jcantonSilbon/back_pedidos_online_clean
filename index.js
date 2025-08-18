@@ -706,17 +706,33 @@ async function generateAndSendMonthlyReport() {
     const pdfPath = `./reporte-pedidos-${Date.now()}.pdf`;
     doc.pipe(fs.createWriteStream(pdfPath));
 
+    // Cargar el logo desde URL
+    const logoUrl = 'https://cdn.shopify.com/s/files/1/0794/1311/7206/files/footer.png?v=1739572304';
+    const logoBuffer = await axios.get(logoUrl, { responseType: 'arraybuffer' }).then(res => res.data);
+
+    doc.image(logoBuffer, 50, 30, { width: 120 });
+
+
     doc.fontSize(18).text('Informe mensual de pedidos', { align: 'center' }).moveDown();
-    doc.fontSize(12).text(`Total pedidos: ${totalPedidos}`);
+    doc.fontSize(12).text(`Respuestas formulario: ${totalPedidos}`);
     doc.text(`Recibidos: ${recibidos}`);
     doc.text(`No recibidos: ${noRecibidos}`);
-    doc.text(`Media días entrega: ${totalConEncuesta ? (sumaDias / totalConEncuesta).toFixed(1) : 'N/A'}`);
 
     const startOfMonth = new Date(prevYear, prevMonth, 1);
     const endOfMonth = new Date(prevYear, prevMonth + 1, 0);
     doc.moveDown().text(`Rango de fechas: ${startOfMonth.toLocaleDateString('es-ES')} a ${endOfMonth.toLocaleDateString('es-ES')}`);
     doc.moveDown().image(donut, { fit: [500, 300], align: 'center' }).moveDown();
     doc.image(bar, { fit: [500, 300], align: 'center' });
+
+    // Footer profesional
+    doc.moveDown(3);
+    doc.fontSize(10)
+      .fillColor('#888888')
+      .text('Este informe ha sido generado automáticamente mediante una solución desarrollada por Javier García-Rojo Cantón. Todos los derechos reservados.', {
+        align: 'center'
+      });
+
+
     doc.end();
 
     const transporter = nodemailer.createTransport({
