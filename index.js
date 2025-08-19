@@ -456,7 +456,7 @@ async function generateAndSendExcelReport() {
 
     await transporter.sendMail({
       from: process.env.SMTP_USER,
-      to: 'jcanton@silbon.es, clopez@silbon.es',
+      to: ['jcanton@silbon.es', 'clopez@silbon.es'],
       subject: '📦 Reporte semanal de pedidos - Salesmanago',
       text: 'Adjunto Excel con el resumen de pedidos exportados desde Salesmanago.',
       attachments: [{ filename: path.basename(filename), path: filename }]
@@ -765,7 +765,7 @@ async function generateAndSendMonthlyReport() {
 
     await transporter.sendMail({
       from: process.env.SMTP_USER,
-      to: 'jcanton@silbon.es, clopez@silbon.es',
+      to: ['jcanton@silbon.es', 'clopez@silbon.es'],
       subject: '📦 Informe mensual de pedidos - Salesmanago',
       text: 'Adjunto Excel y PDF con el resumen de pedidos del mes anterior.',
       attachments: [
