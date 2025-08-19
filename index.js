@@ -456,7 +456,7 @@ async function generateAndSendExcelReport() {
 
     await transporter.sendMail({
       from: process.env.SMTP_USER,
-      to: 'jcanton@silbon.es',
+      to: 'jcanton@silbon.es, clopez@silbon.es',
       subject: '📦 Reporte semanal de pedidos - Salesmanago',
       text: 'Adjunto Excel con el resumen de pedidos exportados desde Salesmanago.',
       attachments: [{ filename: path.basename(filename), path: filename }]
@@ -643,7 +643,7 @@ async function generateAndSendMonthlyReport() {
 
     // Gráfica donut
     const donutChart = new QuickChart();
-    donutChart.setWidth(400).setHeight(200);
+    donutChart.setWidth(500).setHeight(300);
     donutChart.setConfig({
       type: 'doughnut',
       data: {
@@ -730,7 +730,7 @@ async function generateAndSendMonthlyReport() {
       .text(`No recibidos: ${noRecibidos}`);
 
     // Gráficas
-    doc.image(donut, 50, 180, { fit: [400, 200] });
+    doc.image(donut, 50, 180, { fit: [500, 300] });
     doc.image(bar, 50, 500, { fit: [500, 300] });
 
     // Footer profesional justo antes de terminar
@@ -765,7 +765,7 @@ async function generateAndSendMonthlyReport() {
 
     await transporter.sendMail({
       from: process.env.SMTP_USER,
-      to: 'jcanton@silbon.es',
+      to: 'jcanton@silbon.es, clopez@silbon.es',
       subject: '📦 Informe mensual de pedidos - Salesmanago',
       text: 'Adjunto Excel y PDF con el resumen de pedidos del mes anterior.',
       attachments: [
