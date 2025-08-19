@@ -643,7 +643,7 @@ async function generateAndSendMonthlyReport() {
 
     // Gráfica donut
     const donutChart = new QuickChart();
-    donutChart.setWidth(500).setHeight(300);
+    donutChart.setWidth(400).setHeight(200);
     donutChart.setConfig({
       type: 'doughnut',
       data: {
@@ -730,7 +730,7 @@ async function generateAndSendMonthlyReport() {
       .text(`No recibidos: ${noRecibidos}`);
 
     // Gráficas
-    doc.image(donut, 50, 180, { fit: [500, 300] });
+    doc.image(donut, 50, 180, { fit: [400, 200] });
     doc.image(bar, 50, 500, { fit: [500, 300] });
 
     // Footer profesional justo antes de terminar
