@@ -12,6 +12,9 @@ import fs from 'fs';
 import path from 'path';
 import cron from 'node-cron';
 
+import { validatePayload } from "./src/utils/validate.js";
+import { createZendeskTicket } from "./src/utils/zendesk.js";
+
 dotenv.config();
 const app = express();
 app.use(cors());
@@ -788,6 +791,35 @@ app.get('/api/test-monthly-report', async (req, res) => {
   await generateAndSendMonthlyReport();
   res.send('✅ Informe mensual generado y enviado');
 });
+
+
+
+
+// Health simple para Render
+app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'pedidos-clean', zendesk: true }));
+
+// Sidecar: crear ticket en Zendesk desde el formulario de contacto
+app.post('/api/zendesk-contact', async (req, res) => {
+  try {
+    const { payload, errors } = validatePayload(req.body || {});
+    if (errors.length) {
+      return res.status(400).json({ ok: false, error: 'validation_error', details: errors });
+    }
+
+    // Honeypot opcional: si añades <input name="website" style="display:none">
+    if (typeof req.body?.website !== 'undefined' && String(req.body.website).trim() !== '') {
+      return res.status(202).json({ ok: true, spam: true });
+    }
+
+    const json = await createZendeskTicket(payload);
+    return res.status(200).json({ ok: true, ticket_id: json?.ticket?.id || null });
+  } catch (e) {
+    console.error('zendesk-contact error:', e.message);
+    return res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+
 
 
 const PORT = process.env.PORT || 3001;
