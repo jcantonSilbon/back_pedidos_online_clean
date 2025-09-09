@@ -20,6 +20,10 @@ import productsUpdate from './api/products-update.js';
 dotenv.config();
 const app = express();
 app.use(cors());
+app.post('/api/products-update',
+  express.raw({ type: 'application/json' }),
+  (req, res) => productsUpdate(req, res) // el handler ya detecta raw/json
+);
 app.use(express.json());
 
 

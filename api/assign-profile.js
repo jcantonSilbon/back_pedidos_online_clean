@@ -1,9 +1,9 @@
 // backend/api/assign-profile.js
 // Prioriza las SHIP_* y cae a las genéricas si no existen
-const SHOP_DOMAIN  = process.env.SHIP_SHOP_DOMAIN  || process.env.SHOP_DOMAIN;
-const ADMIN_TOKEN  = process.env.SHIP_ADMIN_TOKEN  || process.env.ADMIN_TOKEN;
-const API_VERSION  = process.env.SHIP_API_VERSION  || process.env.API_VERSION || '2025-01';
-const FLOW_SECRET  = process.env.SHIP_FLOW_SECRET  || process.env.FLOW_WEBHOOK_SECRET;
+const SHOP_DOMAIN = process.env.SHIP_SHOP_DOMAIN || process.env.SHOP_DOMAIN;
+const ADMIN_TOKEN = process.env.SHIP_ADMIN_TOKEN || process.env.ADMIN_TOKEN;
+const API_VERSION = process.env.SHIP_API_VERSION || process.env.API_VERSION || '2025-01';
+const FLOW_SECRET = process.env.SHIP_FLOW_SECRET || process.env.FLOW_WEBHOOK_SECRET;
 
 async function adminGraphQL(query, variables = {}) {
   const resp = await fetch(`https://${SHOP_DOMAIN}/admin/api/${API_VERSION}/graphql.json`, {
@@ -59,14 +59,22 @@ export default async function handler(req, res) {
 
     // 3) Asignar al perfil si no está excluido
     const mutation = `
-      mutation AssignToProfile($profileId: ID!, $variantIds: [ID!]!) {
-        deliveryProfileAssignProducts(profileId: $profileId, productVariantIds: $variantIds) {
-          userErrors { field message }
-        }
-      }
-    `;
+  mutation deliveryProfileUpdate($id: ID!, $profile: DeliveryProfileInput!) {
+    deliveryProfileUpdate(id: $id, profile: $profile) {
+      userErrors { field message }
+    }
+  }
+`;
 
-    const assignData = await adminGraphQL(mutation, { profileId, variantIds: [variantId] });
+   const variables = {
+  id: profileId,
+  profile: {
+    profileItemsToCreate: [
+      { appliesTo: { productVariantsToAssociate: [variantId] } }
+    ]
+  }
+};
+const assignData = await adminGraphQL(mutation, variables);
 
     if (assignData.errors) {
       return res.status(500).json({ error: 'GraphQL errors', details: assignData.errors });
