@@ -14,6 +14,8 @@ import cron from 'node-cron';
 
 import { validatePayload } from "./src/utils/validate.js";
 import { createZendeskTicket } from "./src/utils/zendesk.js";
+import assignProfile from './api/assign-profile.js';
+import productsUpdate from './api/products-update.js';
 
 dotenv.config();
 const app = express();
@@ -84,8 +86,6 @@ async function upsertOrderToSalesmanago(email, orderNumber, orderDate) {
   }
 }
 
-
-
 // endpoint para recibir datos de Salesmanago
 app.post('/api/sm-upsert', async (req, res) => {
   const apiKey = process.env.SMANAGO_API_KEY;
@@ -123,7 +123,6 @@ app.post('/api/sm-upsert', async (req, res) => {
     res.status(500).json({ error: 'Falló la conexión con Salesmanago' });
   }
 });
-
 
 // endpoint para exportar contactos a Salesmanago con un tag específico
 app.post('/api/sm-export-tag', async (req, res) => {
@@ -242,7 +241,6 @@ app.get('/api/sm-export-download/:requestId', async (req, res) => {
 });
 
 
-
 // endpoint donde llama salesmanago para confirmar que se ha recibido el email
 app.post('/api/sm-confirmed-received', async (req, res) => {
   const allowedIps = ['89.25.223.94', '89.25.223.95'];
@@ -313,7 +311,6 @@ app.post('/api/sm-confirmed-received', async (req, res) => {
     return res.status(500).json({ error: 'Error interno' });
   }
 });
-
 
 // Función para mostrar datos del Excel desde tu endpoint custom
 async function generateAndSendExcelReport() {
@@ -820,6 +817,11 @@ app.post('/api/zendesk-contact', async (req, res) => {
 });
 
 
+// --- NUEVO: expone el endpoint que ya tienes implementado en api/assign-profile.js
+app.post('/api/assign-profile', assignProfile);
+
+// --- NUEVO: Webhook de Shopify "products/update" (cambios de precio/compare_at_price)
+app.post('/api/webhooks/products/update', productsUpdate);
 
 
 const PORT = process.env.PORT || 3001;

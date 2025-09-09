@@ -1,3 +1,4 @@
+// backend/api/assign-profile.js
 // Prioriza las SHIP_* y cae a las genéricas si no existen
 const SHOP_DOMAIN  = process.env.SHIP_SHOP_DOMAIN  || process.env.SHOP_DOMAIN;
 const ADMIN_TOKEN  = process.env.SHIP_ADMIN_TOKEN  || process.env.ADMIN_TOKEN;
