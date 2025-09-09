@@ -5,13 +5,15 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import ExcelJS from 'exceljs';
 import nodemailer from 'nodemailer';
+import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
+import QuickChart from 'quickchart-js';
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
 import cron from 'node-cron';
 
-import { validatePayload } from './src/utils/validate.js';
-import { createZendeskTicket } from './src/utils/zendesk.js';
+import { validatePayload } from "./src/utils/validate.js";
+import { createZendeskTicket } from "./src/utils/zendesk.js";
 import assignProfile from './api/assign-profile.js';
 import productsUpdate from './api/products-update.js';
 
@@ -19,19 +21,17 @@ dotenv.config();
 const app = express();
 app.use(cors());
 
-// 🔐 Webhook Shopify con RAW body para HMAC real
+// 🔐 Webhook Shopify con RAW body para validar HMAC
 app.post('/api/products-update', express.raw({ type: 'application/json' }), productsUpdate);
 
-// El resto, JSON normal
+// Para el resto, JSON normal
 app.use(express.json());
 
 function generateSha(apiKey, clientId, apiSecret) {
   return crypto.createHash('sha1').update(apiKey + clientId + apiSecret).digest('hex');
 }
 
-/* ===========================
- *   SHOPIFY – pedido por nº
- * =========================== */
+// --------- Shopify helpers (pedidos) ----------
 app.get('/api/order/:id', async (req, res) => {
   const orderNumber = req.params.id;
   try {
@@ -48,33 +48,149 @@ app.get('/api/order/:id', async (req, res) => {
   }
 });
 
-/* ===========================
- *   Salesmanago – util y APIs
- * =========================== */
-async function upsertOrderToSalesmanago(email, orderNumber, orderDate) {
-  const clientId = process.env.SMANAGO_CLIENT_ID;
+// --------- Salesmanago endpoints (tal cual) ----------
+app.post('/api/sm-upsert', async (req, res) => {
   const apiKey = process.env.SMANAGO_API_KEY;
   const apiSecret = process.env.SMANAGO_API_SECRET;
+  const clientId = process.env.SMANAGO_CLIENT_ID;
   const owner = process.env.SMANAGO_OWNER_EMAIL;
   const requestTime = Date.now();
-  const sha = generateSha(apiKey, clientId, apiSecret);
+  const sha = crypto.createHash('sha1').update(apiKey + clientId + apiSecret).digest('hex');
 
-  const payload = {
+  const data = {
     clientId, apiKey, sha, requestTime, owner,
-    contact: { email },
-    properties: { num_pedido: orderNumber, fecha_pedido: orderDate }
+    contact: { email: 'prueba@example.com', name: 'Prueba Test', state: 'PROSPECT' }
   };
 
   try {
-    const response = await axios.post('https://app3.salesmanago.com/api/contact/upsert', payload, {
+    const response = await axios.post(process.env.SMANAGO_API_URL, data, {
       headers: { 'Content-Type': 'application/json' }
     });
-    console.log(`✅ Pedido ${orderNumber} subido para ${email}`);
-    return response.data;
+    res.json(response.data);
   } catch (error) {
-    console.error(`❌ Error al subir pedido de ${email}:`, error.response?.data || error.message);
+    console.error('❌ Error conexión:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Falló la conexión con Salesmanago' });
   }
-}
+});
+
+app.post('/api/sm-export-tag', async (req, res) => {
+  const clientId = process.env.SMANAGO_CLIENT_ID;
+  const apiKey = process.env.SMANAGO_API_KEY;
+  const apiSecret = process.env.SMANAGO_API_SECRET;
+  const owner = 'salesmanago@silbonshop.com';
+  const requestTime = Date.now();
+  const sha = crypto.createHash('sha1').update(apiKey + clientId + apiSecret).digest('hex');
+
+  const payload = {
+    clientId, apiKey, requestTime, sha, owner,
+    contacts: [{ addresseeType: 'tag', value: 'LANDINGPAGE_RECEPCION_PEDIDO' }],
+    data: [{ dataType: 'CONTACT' }, { dataType: 'PROPERTIES' }]
+  };
+
+  try {
+    const response = await axios.post('https://app3.salesmanago.pl/api/contact/export/data', payload, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    console.log('📤 Exportación solicitada. Respuesta:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ Error exportando contactos:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Error exportando contactos' });
+  }
+});
+
+app.get('/api/sm-export-status/:requestId', async (req, res) => {
+  const clientId = process.env.SMANAGO_CLIENT_ID;
+  const apiKey = process.env.SMANAGO_API_KEY;
+  const apiSecret = process.env.SMANAGO_API_SECRET;
+  const owner = 'salesmanago@silbonshop.com';
+  const requestTime = Date.now();
+  const requestId = req.params.requestId;
+  const sha = crypto.createHash('sha1').update(apiKey + clientId + apiSecret).digest('hex');
+
+  const payload = { clientId, apiKey, requestTime, sha, owner, requestId };
+
+  try {
+    const response = await axios.post('https://app3.salesmanago.pl/api/job/status', payload, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    console.log('📥 Estado de la exportación:', response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ Error consultando estado:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Error consultando estado de la exportación' });
+  }
+});
+
+app.get('/api/sm-export-download/:requestId', async (req, res) => {
+  const clientId = process.env.SMANAGO_CLIENT_ID;
+  const apiKey = process.env.SMANAGO_API_KEY;
+  const apiSecret = process.env.SMANAGO_API_SECRET;
+  const owner = 'salesmanago@silbonshop.com';
+  const requestTime = Date.now();
+  const requestId = req.params.requestId;
+  const sha = crypto.createHash('sha1').update(apiKey + clientId + apiSecret).digest('hex');
+  const payload = { clientId, apiKey, requestTime, sha, owner, requestId };
+
+  try {
+    const statusRes = await axios.post('https://app3.salesmanago.pl/api/job/status', payload, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const fileUrl = statusRes.data?.fileUrl;
+    if (!fileUrl) return res.status(404).json({ error: 'Archivo aún no disponible' });
+    const fileRes = await axios.get(fileUrl);
+    res.json(fileRes.data);
+  } catch (error) {
+    console.error('❌ Error al descargar:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Error descargando archivo de contactos' });
+  }
+});
+
+app.post('/api/sm-confirmed-received', async (req, res) => {
+  const allowedIps = ['89.25.223.94', '89.25.223.95'];
+  const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress?.replace('::ffff:', '');
+  const { id, email } = req.body;
+
+  if (!allowedIps.includes(ip)) return res.status(403).json({ error: 'IP no autorizada' });
+  if (id !== 'ff9f1f0d-ffb7-4a00-9d84-999d2657f303') return res.status(403).json({ error: 'id inválido' });
+  if (!email) return res.status(400).json({ error: 'Email no proporcionado' });
+
+  try {
+    const response = await axios.get(`${process.env.SHOPIFY_API_URL}.json?email=${email}`, {
+      headers: { 'X-Shopify-Access-Token': process.env.SHOPIFY_API_TOKEN, 'Content-Type': 'application/json' }
+    });
+
+    const order = response.data.orders?.[0];
+    if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
+
+    const orderNumber = order.name?.replace('#', '') || 'N/A';
+    const orderDate = order.created_at?.split('T')[0] || '';
+
+    const clientId = process.env.SMANAGO_CLIENT_ID;
+    const apiKey = process.env.SMANAGO_API_KEY;
+    const apiSecret = process.env.SMANAGO_API_SECRET;
+    const owner = process.env.SMANAGO_OWNER_EMAIL;
+    const requestTime = Date.now();
+    const sha = crypto.createHash('sha1').update(apiKey + clientId + apiSecret).digest('hex');
+
+    const payload = {
+      clientId, apiKey, sha, requestTime, owner,
+      contact: { email },
+      properties: { num_pedido: orderNumber, fecha_pedido: orderDate }
+    };
+
+    await axios.post('https://app3.salesmanago.com/api/contact/upsert', payload, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    console.log(`✅ Pedido ${orderNumber} subido para ${email}`);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error(`❌ Error procesando ${email}:`, err.response?.data || err.message);
+    return res.status(500).json({ error: 'Error interno' });
+  }
+});
+
 
 app.post('/api/sm-upsert', async (req, res) => {
   const apiKey = process.env.SMANAGO_API_KEY;
@@ -569,18 +685,17 @@ app.get('/api/test-monthly-report', async (_req, res) => {
 /* ===========================
  *   Health + Zendesk sidecar
  * =========================== */
+// Health
 app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'pedidos-clean', zendesk: true }));
 
+// Sidecar Zendesk
 app.post('/api/zendesk-contact', async (req, res) => {
   try {
     const { payload, errors } = validatePayload(req.body || {});
     if (errors.length) return res.status(400).json({ ok: false, error: 'validation_error', details: errors });
-
-    // Honeypot simple
     if (typeof req.body?.website !== 'undefined' && String(req.body.website).trim() !== '') {
       return res.status(202).json({ ok: true, spam: true });
     }
-
     const json = await createZendeskTicket(payload);
     return res.status(200).json({ ok: true, ticket_id: json?.ticket?.id || null });
   } catch (e) {
@@ -589,7 +704,7 @@ app.post('/api/zendesk-contact', async (req, res) => {
   }
 });
 
-// Endpoint manual para asignación por variante (si lo necesitas)
+// Endpoint manual por si quieres probar asignación directa
 app.post('/api/assign-profile', assignProfile);
 
 const PORT = process.env.PORT || 3001;

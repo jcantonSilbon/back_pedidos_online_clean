@@ -28,16 +28,17 @@ async function adminGraphQL(query, variables = {}) {
   return data.data;
 }
 
-// Intento robusto: prueba 3 mutaciones distintas según versión de API
+// 👉 única función de asignación (moderna) con fallback a AssignProducts
 async function assignToProfile(profileId, variantIds) {
-  if (!profileId || !variantIds || !variantIds.length) return;
+  if (!profileId || !variantIds?.length) return;
 
-  const chunk = (arr, size) => arr.reduce(
-    (acc, _, i) => (i % size ? acc : [...acc, arr.slice(i, i + size)]), []
-  );
+  // lotes razonables
+  const chunk = (arr, size) => arr.reduce((acc, _, i) =>
+    (i % size ? acc : [...acc, arr.slice(i, i + size)]), []);
+  const batches = chunk(variantIds, 200);
 
-  for (const batch of chunk(variantIds, 200)) {
-    // 1) deliveryProfileUpdate (variantsToAssociate / variantsToDissociate)
+  for (const batch of batches) {
+    // 1) deliveryProfileUpdate con variantsToAssociate
     try {
       const m1 = `
         mutation AssignVariants($id: ID!, $assoc: [ID!], $dissoc: [ID!]) {
@@ -51,13 +52,13 @@ async function assignToProfile(profileId, variantIds) {
       `;
       const d1 = await adminGraphQL(m1, { id: profileId, assoc: batch, dissoc: [] });
       const errs1 = d1?.deliveryProfileUpdate?.userErrors || [];
-      if (errs1.length) {
-        const onlyAlready = errs1.every(e => /already|associated/i.test(e.message || ''));
-        if (!onlyAlready) throw new Error(`schema1: ${JSON.stringify(errs1)}`);
+      const benign1 = errs1.every(e => /already|associated/i.test(String(e?.message || '')));
+      if (errs1.length && !benign1) {
+        throw new Error(`userErrors: ${JSON.stringify(errs1)}`);
       }
-      continue; // ok o sólo "ya asociado"
+      continue; // OK o solo "ya asociado"
     } catch (e1) {
-      // 2) deliveryProfileAssignProducts (productVariantIdsToAssociate / ToDissociate)
+      // 2) fallback: deliveryProfileAssignProducts (según tienda/API)
       try {
         const m2 = `
           mutation AssignProducts($id: ID!, $assoc: [ID!], $dissoc: [ID!]) {
@@ -72,35 +73,13 @@ async function assignToProfile(profileId, variantIds) {
         `;
         const d2 = await adminGraphQL(m2, { id: profileId, assoc: batch, dissoc: [] });
         const errs2 = d2?.deliveryProfileAssignProducts?.userErrors || [];
-        if (errs2.length) {
-          const onlyAlready = errs2.every(e => /already|associated/i.test(e.message || ''));
-          if (!onlyAlready) throw new Error(`schema2: ${JSON.stringify(errs2)}`);
+        const benign2 = errs2.every(e => /already|associated/i.test(String(e?.message || '')));
+        if (errs2.length && !benign2) {
+          throw new Error(`fallback userErrors: ${JSON.stringify(errs2)}`);
         }
-        continue; // ok
       } catch (e2) {
-        // 3) legacy: deliveryProfileUpdate con profileItemsToCreate
-        const m3 = `
-          mutation AssignLegacy($id: ID!, $variants: [ID!]) {
-            deliveryProfileUpdate(
-              id: $id,
-              profile: {
-                profileItemsToCreate: [
-                  { appliesTo: { productVariantsToAssociate: $variants } }
-                ]
-              }
-            ) {
-              userErrors { field message }
-            }
-          }
-        `;
-        const d3 = await adminGraphQL(m3, { id: profileId, variants: batch });
-        const errs3 = d3?.deliveryProfileUpdate?.userErrors || [];
-        if (errs3.length) {
-          const onlyAlready = errs3.every(e => /already|associate/i.test(e.message || ''));
-          if (!onlyAlready) {
-            throw new Error(`Assign failed: ${JSON.stringify(errs3)}`);
-          }
-        }
+        // Si también falla, lo propagamos (no intentamos legacy para evitar tu error)
+        throw e2;
       }
     }
   }
@@ -131,10 +110,7 @@ function verifyHmac(req, rawBody) {
 
 async function fetchProductREST(productIdNum) {
   const url = `https://${SHOP_DOMAIN}/admin/api/${API_VERSION}/products/${productIdNum}.json`;
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: { 'X-Shopify-Access-Token': ADMIN_TOKEN }
-  });
+  const res = await fetch(url, { method: 'GET', headers: { 'X-Shopify-Access-Token': ADMIN_TOKEN } });
   if (!res.ok) throw new Error(`REST product fetch failed: ${res.status}`);
   const json = await res.json();
   return json?.product || {};
@@ -165,21 +141,18 @@ async function fetchProductGQL(productIdNum) {
 /* ============== main handler ============== */
 export default async function productsUpdate(req, res) {
   try {
-    // Asegurar rawBody y validar HMAC
+    // HMAC con raw body
     const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body || {}));
     if (!verifyHmac(req, rawBody)) {
       console.warn('⚠️  HMAC inválido en products/update');
-      // Si quieres cortar duro, descomenta:
       // return res.status(401).json({ ok:false, error:'invalid_hmac' });
     }
 
-    // Parse payload (puede venir en Buffer)
+    // Parse seguro (puede venir buffer)
     let payload;
     try {
       payload = Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString('utf8')) : (req.body || {});
-    } catch {
-      payload = {};
-    }
+    } catch { payload = {}; }
 
     let handle = String(payload.handle || '').toLowerCase();
     let variants = Array.isArray(payload.variants) ? payload.variants : [];
@@ -188,7 +161,7 @@ export default async function productsUpdate(req, res) {
       String(payload.id || '').replace(/\D/g, '') ||
       String(payload.admin_graphql_api_id || '').replace(/\D/g, '');
 
-    // Fallback REST si no llegan variantes
+    // Fallback REST si no llegan variants en el webhook
     if (!variants.length && productIdNum) {
       const p = await fetchProductREST(productIdNum);
       if (!handle && p.handle) handle = String(p.handle).toLowerCase();
@@ -225,16 +198,13 @@ export default async function productsUpdate(req, res) {
       else toGeneral.push(gid);
     }
 
+    // Asignar
     const ops = [];
     if (PROFILE_REBAJAS_ID && toRebajas.length) ops.push(assignToProfile(PROFILE_REBAJAS_ID, toRebajas));
     if (PROFILE_GENERAL_ID && toGeneral.length) ops.push(assignToProfile(PROFILE_GENERAL_ID, toGeneral));
     await Promise.all(ops);
 
-    console.log('✅ products/update asignado:', {
-      handle,
-      rebajas: toRebajas.length,
-      general: toGeneral.length,
-    });
+    console.log('✅ products/update asignado:', { handle, rebajas: toRebajas.length, general: toGeneral.length });
 
     return res.status(200).json({
       ok: true,
@@ -244,7 +214,7 @@ export default async function productsUpdate(req, res) {
     });
   } catch (err) {
     console.error('❌ products-update error:', err.message);
-    // 200 para no forzar reintentos masivos de Shopify; el error queda logueado
+    // 200 para evitar reintentos masivos
     return res.status(200).json({ ok: false, error: err.message });
   }
 }
