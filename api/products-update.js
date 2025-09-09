@@ -7,7 +7,7 @@ const ADMIN_TOKEN  = process.env.SHIP_ADMIN_TOKEN  || process.env.SHOPIFY_API_TO
 const API_VERSION  = process.env.SHIP_API_VERSION  || process.env.API_VERSION || '2025-01';
 
 const PROFILE_REBAJAS_ID = process.env.SHIP_PROFILE_REBAJAS_ID || process.env.REBAJAS_PROFILE_ID;
-const PROFILE_GENERAL_ID = process.env.SHIP_PROFILE_GENERAL_ID || process.env.GENERAL_PROFILE_ID;
+const PROFILE_GENERAL_ID = process.env.SHIP_PROFILE_GENERAL_ID || process.env.GENERAL_PROFILE_ID; // puede ser default
 
 const EXCLUDE_HANDLE = (process.env.EXCLUDE_HANDLE_SUBSTRING || 'second-life').toLowerCase();
 const WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
@@ -32,9 +32,13 @@ const chunk = (arr, size) =>
   (arr || []).reduce((acc, _, i) => (i % size ? acc : [...acc, arr.slice(i, i + size)]), []);
 
 /**
- * ÚNICA mutación soportada hoy:
+ * Única mutación soportada hoy:
  * deliveryProfileUpdate(profile: { variantsToAssociate, variantsToDissociate })
  * Lotes de 200.
+ *
+ * Nota: tratamos como “benignos”:
+ *  - “already/associated/exists”
+ *  - “Default Profile product variant cannot be dissociated.”
  */
 async function updateProfile(profileId, toAssociate = [], toDissociate = []) {
   if (!profileId) return;
@@ -65,8 +69,17 @@ async function updateProfile(profileId, toAssociate = [], toDissociate = []) {
 
     const errs = data?.deliveryProfileUpdate?.userErrors || [];
     if (errs.length) {
-      const benign = errs.every(e => /already|associated|exists/i.test(String(e.message)));
+      const benign = errs.every(e => {
+        const msg = String(e?.message || '').toLowerCase();
+        return (
+          msg.includes('already') ||
+          msg.includes('associated') ||
+          msg.includes('exists') ||
+          msg.includes('default profile product variant cannot be dissociated')
+        );
+      });
       if (!benign) throw new Error(`Assign variants errors: ${JSON.stringify(errs)}`);
+      // si eran benignos, los ignoramos
     }
   }
 }
@@ -177,16 +190,21 @@ export default async function productsUpdate(req, res) {
       else toGeneral.push(gid);
     }
 
-    // Asociar y DESasociar entre perfiles (si están definidos)
+    // Operaciones:
+    //  - CON DESCUENTO: asociar a REBAJAS; (opcional) quitar de GENERAL (si GENERAL no es Default; si lo es, error benigno)
+    //  - SIN DESCUENTO: quitar de REBAJAS para que caiga al Default automáticamente
     const ops = [];
 
     if (PROFILE_REBAJAS_ID) {
-      if (toRebajas.length) ops.push(updateProfile(PROFILE_REBAJAS_ID, toRebajas, []));
-      if (toGeneral.length) ops.push(updateProfile(PROFILE_REBAJAS_ID, [], toGeneral)); // quitar de Rebajas
+      if (toRebajas.length) ops.push(updateProfile(PROFILE_REBAJAS_ID, toRebajas, []));   // mover a Rebajas
+      if (toGeneral.length) ops.push(updateProfile(PROFILE_REBAJAS_ID, [], toGeneral));   // salir de Rebajas cuando ya no hay descuento
     }
+
     if (PROFILE_GENERAL_ID) {
-      if (toGeneral.length) ops.push(updateProfile(PROFILE_GENERAL_ID, toGeneral, []));
-      if (toRebajas.length) ops.push(updateProfile(PROFILE_GENERAL_ID, [], toRebajas)); // quitar de General
+      // Cuando pasan a Rebajas intentamos quitarlos de "General" por si "General" fuese un perfil custom.
+      // Si es el Default, Shopify devolverá "Default Profile product variant cannot be dissociated." y lo ignoramos.
+      if (toRebajas.length) ops.push(updateProfile(PROFILE_GENERAL_ID, [], toRebajas));
+      // OJO: no asociamos explícitamente a GENERAL. Para volver al Default basta con desasociar de los custom.
     }
 
     await Promise.all(ops);
