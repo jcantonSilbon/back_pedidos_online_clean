@@ -2,23 +2,18 @@
 import crypto from 'crypto';
 import fetch from 'node-fetch';
 
-// Prioriza variables SHIP_* y cae a genéricas si no existen
-const SHOP_DOMAIN  = process.env.SHIP_SHOP_DOMAIN  || process.env.SHOP_DOMAIN;
-const ADMIN_TOKEN  = process.env.SHIP_ADMIN_TOKEN  || process.env.SHOPIFY_API_TOKEN || process.env.ADMIN_TOKEN;
-const API_VERSION  = process.env.SHIP_API_VERSION  || process.env.API_VERSION || '2025-01';
+// --- ENV / Constantes ---
+const SHOP_DOMAIN   = process.env.SHIP_SHOP_DOMAIN  || process.env.SHOP_DOMAIN;
+const ADMIN_TOKEN   = process.env.SHIP_ADMIN_TOKEN  || process.env.SHOPIFY_API_TOKEN || process.env.ADMIN_TOKEN;
+const API_VERSION   = process.env.SHIP_API_VERSION  || process.env.API_VERSION || '2025-01';
 
-// IDs de perfiles (GIDs). Ponlos en .env
-// Ej.: REBAJAS: gid://shopify/DeliveryProfile/128100729209
 const PROFILE_REBAJAS_ID = process.env.SHIP_PROFILE_REBAJAS_ID || process.env.REBAJAS_PROFILE_ID;
 const PROFILE_GENERAL_ID = process.env.SHIP_PROFILE_GENERAL_ID || process.env.GENERAL_PROFILE_ID;
 
-// Subcadena para excluir por handle (case-insensitive)
 const EXCLUDE_HANDLE = (process.env.EXCLUDE_HANDLE_SUBSTRING || 'second-life').toLowerCase();
+const WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET; // opcional
 
-// Opcional: secreto del webhook para validar HMAC (si lo tienes)
-const WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
-
-// --- helpers ---
+// --- Helpers comunes ---
 async function adminGraphQL(query, variables = {}) {
   const url = `https://${SHOP_DOMAIN}/admin/api/${API_VERSION}/graphql.json`;
   const res = await fetch(url, {
@@ -37,6 +32,7 @@ async function adminGraphQL(query, variables = {}) {
   return data.data;
 }
 
+// Asignar (o re-asignar) variantes a un perfil usando deliveryProfileUpdate
 async function assignToProfile(profileId, variantIds) {
   if (!profileId || !variantIds || !variantIds.length) return;
 
@@ -48,43 +44,38 @@ async function assignToProfile(profileId, variantIds) {
     }
   `;
 
-  // trocear en lotes razonables (p.e. 200)
-  const chunk = (arr, size) => arr.reduce((acc, _, i) =>
-    (i % size ? acc : [...acc, arr.slice(i, i + size)]), []);
+  // troceamos para no mandar listas enormes
+  const chunk = (arr, size) =>
+    arr.reduce((acc, _, i) => (i % size ? acc : [...acc, arr.slice(i, i + size)]), []);
 
-  const batches = chunk(variantIds, 200);
-
-  for (const batch of batches) {
+  for (const batch of chunk(variantIds, 200)) {
     const variables = {
       id: profileId,
       profile: {
-        // creamos un único profileItem que asocia todas las variantes del lote
         profileItemsToCreate: [
           {
             appliesTo: {
-              productVariantsToAssociate: batch
-            }
-          }
-        ]
-      }
+              productVariantsToAssociate: batch,
+            },
+          },
+        ],
+      },
     };
 
     const data = await adminGraphQL(mutation, variables);
-
     const errs = data?.deliveryProfileUpdate?.userErrors || [];
     if (errs.length) {
-      // si alguna ya está asociada, lo consideramos OK y seguimos
-      const onlyAlreadyLinked = errs.every(e =>
+      // si ya estaban asociados, lo consideramos OK
+      const onlyAlready = errs.every(e =>
         String(e.message).toLowerCase().includes('already') ||
         String(e.message).toLowerCase().includes('associated')
       );
-      if (!onlyAlreadyLinked) {
+      if (!onlyAlready) {
         throw new Error(`Assign userErrors: ${JSON.stringify(errs)}`);
       }
     }
   }
 }
-
 
 function gidFromVariant(variant) {
   if (variant?.admin_graphql_api_id) return variant.admin_graphql_api_id;
@@ -98,17 +89,13 @@ function isDiscounted(variant) {
   return Number.isFinite(p) && Number.isFinite(cp) && cp > p;
 }
 
-// (opcional) verificación HMAC; si no tienes el secreto configurado, se ignora.
+// Verificación HMAC (best-effort). Si no tienes secreto, devuelve true.
 function verifyHmac(req) {
   if (!WEBHOOK_SECRET) return true;
   try {
-    // WARNING: al tener app.use(express.json()) puede que no tengamos el raw body exacto.
-    // Recompongo el raw como JSON string. Si quisieras verificación estricta, monta un raw parser por ruta.
+    // Con express.json no tenemos raw body; reconstruimos JSON.
     const raw = Buffer.from(JSON.stringify(req.body));
-    const digest = crypto
-      .createHmac('sha256', WEBHOOK_SECRET)
-      .update(raw)
-      .digest('base64');
+    const digest = crypto.createHmac('sha256', WEBHOOK_SECRET).update(raw).digest('base64');
     const hmac = req.get('X-Shopify-Hmac-Sha256') || '';
     return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(hmac));
   } catch {
@@ -116,31 +103,60 @@ function verifyHmac(req) {
   }
 }
 
+// --- NUEVO: Recuperar producto por REST si el webhook no trae variants ---
+async function fetchProductWithVariantsREST(productIdNum) {
+  const url = `https://${SHOP_DOMAIN}/admin/api/${API_VERSION}/products/${productIdNum}.json?fields=handle,variants`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Shopify-Access-Token': ADMIN_TOKEN,
+    },
+  });
+  if (!res.ok) throw new Error(`REST product fetch failed: ${res.status}`);
+  const { product } = await res.json();
+  return product || {};
+}
+
+// --- Handler principal ---
 export default async function productsUpdate(req, res) {
   try {
-    // 1) seguridad (mejor best-effort; si falla y quieres estricta, ver nota del raw body arriba)
     if (!verifyHmac(req)) {
       console.warn('⚠️  HMAC inválido en products/update');
-      // no corto la ejecución para no romper tu flujo, pero si quieres, descomenta:
+      // Si quieres bloquear, devuelve 401.
       // return res.status(401).json({ ok: false, error: 'invalid_hmac' });
     }
 
     const payload = req.body || {};
-    const handle = String(payload.handle || '').toLowerCase();
 
-    // 2) excluir por handle
+    // 1) usar lo que venga en el webhook
+    let handle = String(payload.handle || '').toLowerCase();
+    let variants = Array.isArray(payload.variants) ? payload.variants : [];
+
+    // 2) si no hay variants, traemos por REST
+    if (!variants.length) {
+      const productIdNum = String(payload.id || '').replace(/\D/g, '');
+      if (productIdNum) {
+        const p = await fetchProductWithVariantsREST(productIdNum);
+        if (!handle && p.handle) handle = String(p.handle).toLowerCase();
+        variants = Array.isArray(p.variants) ? p.variants : [];
+        console.log(`🔁 products/update: webhook sin variants; recuperados via REST: ${variants.length}`);
+      }
+    }
+
+    // 3) si seguimos sin variants, terminamos limpio
+    if (!variants.length) {
+      console.log('ℹ️  products/update sin variants tras fetch. OK');
+      return res.status(200).json({ ok: true, noVariantsAfterFetch: true });
+    }
+
+    // 4) exclusión por handle
     if (handle.includes(EXCLUDE_HANDLE)) {
       console.log(`🟡 Producto excluido por handle: ${handle}`);
       return res.status(200).json({ ok: true, excluded: true });
     }
 
-    const variants = Array.isArray(payload.variants) ? payload.variants : [];
-    if (variants.length === 0) {
-      console.log('ℹ️  products/update sin variants. OK');
-      return res.status(200).json({ ok: true, noVariants: true });
-    }
-
-    // 3) separamos por rebaja / normal
+    // 5) separar por rebaja / normal
     const toRebajas = [];
     const toGeneral = [];
 
@@ -151,7 +167,7 @@ export default async function productsUpdate(req, res) {
       else toGeneral.push(gid);
     }
 
-    // 4) asignaciones por lotes (solo si hay perfiles definidos)
+    // 6) asignar por lotes
     const ops = [];
     if (PROFILE_REBAJAS_ID && toRebajas.length) {
       ops.push(assignToProfile(PROFILE_REBAJAS_ID, toRebajas));
@@ -176,7 +192,7 @@ export default async function productsUpdate(req, res) {
     });
   } catch (err) {
     console.error('❌ products-update error:', err.message);
-    // responde 200 para evitar reintentos masivos de Shopify, pero registra el error
+    // 200 para que Shopify no haga reintentos masivos
     return res.status(200).json({ ok: false, error: err.message });
   }
 }
