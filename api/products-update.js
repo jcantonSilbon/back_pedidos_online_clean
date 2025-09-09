@@ -38,20 +38,53 @@ async function adminGraphQL(query, variables = {}) {
 }
 
 async function assignToProfile(profileId, variantIds) {
-  if (!profileId || !variantIds || variantIds.length === 0) return;
+  if (!profileId || !variantIds || !variantIds.length) return;
+
   const mutation = `
-    mutation AssignToProfile($profileId: ID!, $variantIds: [ID!]!) {
-      deliveryProfileAssignProducts(profileId: $profileId, productVariantIds: $variantIds) {
+    mutation deliveryProfileUpdate($id: ID!, $profile: DeliveryProfileInput!) {
+      deliveryProfileUpdate(id: $id, profile: $profile) {
         userErrors { field message }
       }
     }
   `;
-  const data = await adminGraphQL(mutation, { profileId, variantIds });
-  const userErrors = data?.deliveryProfileAssignProducts?.userErrors || [];
-  if (userErrors.length) {
-    throw new Error(`Assign userErrors: ${JSON.stringify(userErrors)}`);
+
+  // trocear en lotes razonables (p.e. 200)
+  const chunk = (arr, size) => arr.reduce((acc, _, i) =>
+    (i % size ? acc : [...acc, arr.slice(i, i + size)]), []);
+
+  const batches = chunk(variantIds, 200);
+
+  for (const batch of batches) {
+    const variables = {
+      id: profileId,
+      profile: {
+        // creamos un único profileItem que asocia todas las variantes del lote
+        profileItemsToCreate: [
+          {
+            appliesTo: {
+              productVariantsToAssociate: batch
+            }
+          }
+        ]
+      }
+    };
+
+    const data = await adminGraphQL(mutation, variables);
+
+    const errs = data?.deliveryProfileUpdate?.userErrors || [];
+    if (errs.length) {
+      // si alguna ya está asociada, lo consideramos OK y seguimos
+      const onlyAlreadyLinked = errs.every(e =>
+        String(e.message).toLowerCase().includes('already') ||
+        String(e.message).toLowerCase().includes('associated')
+      );
+      if (!onlyAlreadyLinked) {
+        throw new Error(`Assign userErrors: ${JSON.stringify(errs)}`);
+      }
+    }
   }
 }
+
 
 function gidFromVariant(variant) {
   if (variant?.admin_graphql_api_id) return variant.admin_graphql_api_id;
