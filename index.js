@@ -820,8 +820,9 @@ app.post('/api/zendesk-contact', async (req, res) => {
 // --- NUEVO: expone el endpoint que ya tienes implementado en api/assign-profile.js
 app.post('/api/assign-profile', assignProfile);
 
-// --- NUEVO: Webhook de Shopify "products/update" (cambios de precio/compare_at_price)
-app.post('/api/webhooks/products/update', productsUpdate);
+// Webhook "products/update" de Shopify
+app.post('/api/products-update', productsUpdate);
+
 
 
 const PORT = process.env.PORT || 3001;
