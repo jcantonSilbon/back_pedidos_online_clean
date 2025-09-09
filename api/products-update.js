@@ -12,7 +12,7 @@ const PROFILE_GENERAL_ID = process.env.SHIP_PROFILE_GENERAL_ID || process.env.GE
 const EXCLUDE_HANDLE = (process.env.EXCLUDE_HANDLE_SUBSTRING || 'second-life').toLowerCase();
 const WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 
-/* ============== helpers ============== */
+/* ---------------- helpers comunes ---------------- */
 async function adminGraphQL(query, variables = {}) {
   const url = `https://${SHOP_DOMAIN}/admin/api/${API_VERSION}/graphql.json`;
   const res = await fetch(url, {
@@ -28,66 +28,52 @@ async function adminGraphQL(query, variables = {}) {
   return data.data;
 }
 
-// 👉 única función de asignación (moderna) con fallback a AssignProducts
-async function assignToProfile(profileId, variantIds) {
-  if (!profileId || !variantIds?.length) return;
+const chunk = (arr, size) =>
+  (arr || []).reduce((acc, _, i) => (i % size ? acc : [...acc, arr.slice(i, i + size)]), []);
 
-  // lotes razonables
-  const chunk = (arr, size) => arr.reduce((acc, _, i) =>
-    (i % size ? acc : [...acc, arr.slice(i, i + size)]), []);
-  const batches = chunk(variantIds, 200);
+/**
+ * ÚNICA mutación soportada hoy:
+ * deliveryProfileUpdate(profile: { variantsToAssociate, variantsToDissociate })
+ * Lotes de 200.
+ */
+async function updateProfile(profileId, toAssociate = [], toDissociate = []) {
+  if (!profileId) return;
+  if ((!toAssociate || !toAssociate.length) && (!toDissociate || !toDissociate.length)) return;
 
-  for (const batch of batches) {
-    // 1) deliveryProfileUpdate con variantsToAssociate
-    try {
-      const m1 = `
-        mutation AssignVariants($id: ID!, $assoc: [ID!], $dissoc: [ID!]) {
-          deliveryProfileUpdate(
-            id: $id,
-            profile: { variantsToAssociate: $assoc, variantsToDissociate: $dissoc }
-          ) {
-            userErrors { field message }
-          }
+  const MUTATION = `
+    mutation AssignVariants($id: ID!, $assoc: [ID!], $dissoc: [ID!]) {
+      deliveryProfileUpdate(
+        id: $id,
+        profile: {
+          variantsToAssociate: $assoc
+          variantsToDissociate: $dissoc
         }
-      `;
-      const d1 = await adminGraphQL(m1, { id: profileId, assoc: batch, dissoc: [] });
-      const errs1 = d1?.deliveryProfileUpdate?.userErrors || [];
-      const benign1 = errs1.every(e => /already|associated/i.test(String(e?.message || '')));
-      if (errs1.length && !benign1) {
-        throw new Error(`userErrors: ${JSON.stringify(errs1)}`);
+      ) {
+        userErrors { field message }
       }
-      continue; // OK o solo "ya asociado"
-    } catch (e1) {
-      // 2) fallback: deliveryProfileAssignProducts (según tienda/API)
-      try {
-        const m2 = `
-          mutation AssignProducts($id: ID!, $assoc: [ID!], $dissoc: [ID!]) {
-            deliveryProfileAssignProducts(
-              profileId: $id,
-              productVariantIdsToAssociate: $assoc,
-              productVariantIdsToDissociate: $dissoc
-            ) {
-              userErrors { field message }
-            }
-          }
-        `;
-        const d2 = await adminGraphQL(m2, { id: profileId, assoc: batch, dissoc: [] });
-        const errs2 = d2?.deliveryProfileAssignProducts?.userErrors || [];
-        const benign2 = errs2.every(e => /already|associated/i.test(String(e?.message || '')));
-        if (errs2.length && !benign2) {
-          throw new Error(`fallback userErrors: ${JSON.stringify(errs2)}`);
-        }
-      } catch (e2) {
-        // Si también falla, lo propagamos (no intentamos legacy para evitar tu error)
-        throw e2;
-      }
+    }
+  `;
+
+  const assocBatches = chunk(toAssociate, 200);
+  const dissocBatches = chunk(toDissociate, 200);
+  const rounds = Math.max(assocBatches.length, dissocBatches.length) || 1;
+
+  for (let i = 0; i < rounds; i++) {
+    const assoc = assocBatches[i] || [];
+    const dissoc = dissocBatches[i] || [];
+    const data = await adminGraphQL(MUTATION, { id: profileId, assoc, dissoc });
+
+    const errs = data?.deliveryProfileUpdate?.userErrors || [];
+    if (errs.length) {
+      const benign = errs.every(e => /already|associated|exists/i.test(String(e.message)));
+      if (!benign) throw new Error(`Assign variants errors: ${JSON.stringify(errs)}`);
     }
   }
 }
 
-function gidFromVariant(variant) {
-  if (variant?.admin_graphql_api_id) return variant.admin_graphql_api_id;
-  const id = String(variant?.id || '').replace(/\D/g, '');
+function gidFromVariant(v) {
+  if (v?.admin_graphql_api_id) return v.admin_graphql_api_id;
+  const id = String(v?.id || '').replace(/\D/g, '');
   return id ? `gid://shopify/ProductVariant/${id}` : null;
 }
 
@@ -101,11 +87,9 @@ function verifyHmac(req, rawBody) {
   if (!WEBHOOK_SECRET) return true;
   try {
     const digest = crypto.createHmac('sha256', WEBHOOK_SECRET).update(rawBody).digest('base64');
-    const hmacHeader = req.get('X-Shopify-Hmac-Sha256') || '';
-    return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(hmacHeader));
-  } catch {
-    return false;
-  }
+    const h = req.get('X-Shopify-Hmac-Sha256') || '';
+    return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(h));
+  } catch { return false; }
 }
 
 async function fetchProductREST(productIdNum) {
@@ -138,21 +122,19 @@ async function fetchProductGQL(productIdNum) {
   return { handle: d?.product?.handle || '', variants };
 }
 
-/* ============== main handler ============== */
+/* ---------------- handler webhook ---------------- */
 export default async function productsUpdate(req, res) {
   try {
-    // HMAC con raw body
     const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body || {}));
     if (!verifyHmac(req, rawBody)) {
       console.warn('⚠️  HMAC inválido en products/update');
       // return res.status(401).json({ ok:false, error:'invalid_hmac' });
     }
 
-    // Parse seguro (puede venir buffer)
+    // Parseo seguro (puede venir en Buffer)
     let payload;
-    try {
-      payload = Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString('utf8')) : (req.body || {});
-    } catch { payload = {}; }
+    try { payload = Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString('utf8')) : (req.body || {}); }
+    catch { payload = {}; }
 
     let handle = String(payload.handle || '').toLowerCase();
     let variants = Array.isArray(payload.variants) ? payload.variants : [];
@@ -161,15 +143,13 @@ export default async function productsUpdate(req, res) {
       String(payload.id || '').replace(/\D/g, '') ||
       String(payload.admin_graphql_api_id || '').replace(/\D/g, '');
 
-    // Fallback REST si no llegan variants en el webhook
+    // Fallbacks para traer variantes si el webhook viene pelado
     if (!variants.length && productIdNum) {
       const p = await fetchProductREST(productIdNum);
       if (!handle && p.handle) handle = String(p.handle).toLowerCase();
       variants = Array.isArray(p.variants) ? p.variants : [];
       console.log(`🔁 REST fallback: variantes recuperadas = ${variants.length} (productId=${productIdNum})`);
     }
-
-    // Fallback GraphQL si aún no hay
     if (!variants.length && productIdNum) {
       const p = await fetchProductGQL(productIdNum);
       if (!handle && p.handle) handle = String(p.handle).toLowerCase();
@@ -182,13 +162,12 @@ export default async function productsUpdate(req, res) {
       return res.status(200).json({ ok: true, noVariantsAfterFetch: true });
     }
 
-    // Exclusión por handle
     if (handle.includes(EXCLUDE_HANDLE)) {
       console.log(`🟡 Producto excluido por handle: ${handle}`);
       return res.status(200).json({ ok: true, excluded: true, handle });
     }
 
-    // Clasificar variantes
+    // Clasificar
     const toRebajas = [];
     const toGeneral = [];
     for (const v of variants) {
@@ -198,13 +177,25 @@ export default async function productsUpdate(req, res) {
       else toGeneral.push(gid);
     }
 
-    // Asignar
+    // Asociar y DESasociar entre perfiles (si están definidos)
     const ops = [];
-    if (PROFILE_REBAJAS_ID && toRebajas.length) ops.push(assignToProfile(PROFILE_REBAJAS_ID, toRebajas));
-    if (PROFILE_GENERAL_ID && toGeneral.length) ops.push(assignToProfile(PROFILE_GENERAL_ID, toGeneral));
+
+    if (PROFILE_REBAJAS_ID) {
+      if (toRebajas.length) ops.push(updateProfile(PROFILE_REBAJAS_ID, toRebajas, []));
+      if (toGeneral.length) ops.push(updateProfile(PROFILE_REBAJAS_ID, [], toGeneral)); // quitar de Rebajas
+    }
+    if (PROFILE_GENERAL_ID) {
+      if (toGeneral.length) ops.push(updateProfile(PROFILE_GENERAL_ID, toGeneral, []));
+      if (toRebajas.length) ops.push(updateProfile(PROFILE_GENERAL_ID, [], toRebajas)); // quitar de General
+    }
+
     await Promise.all(ops);
 
-    console.log('✅ products/update asignado:', { handle, rebajas: toRebajas.length, general: toGeneral.length });
+    console.log('✅ products/update asignado:', {
+      handle,
+      rebajas: toRebajas.length,
+      general: toGeneral.length,
+    });
 
     return res.status(200).json({
       ok: true,
@@ -214,7 +205,6 @@ export default async function productsUpdate(req, res) {
     });
   } catch (err) {
     console.error('❌ products-update error:', err.message);
-    // 200 para evitar reintentos masivos
     return res.status(200).json({ ok: false, error: err.message });
   }
 }
