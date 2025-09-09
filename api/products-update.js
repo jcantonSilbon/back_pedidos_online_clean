@@ -42,9 +42,8 @@ async function assignToProfile(profileId, variantIds) {
     }
   `;
 
-  // troceo en lotes por seguridad
-  const chunk = (arr, size) => arr.reduce((acc, _, i) =>
-    (i % size ? acc : [...acc, arr.slice(i, i + size)]), []);
+  const chunk = (arr, size) =>
+    arr.reduce((acc, _, i) => (i % size ? acc : [...acc, arr.slice(i, i + size)]), []);
   const batches = chunk(variantIds, 200);
 
   for (const batch of batches) {
@@ -79,24 +78,22 @@ function gidFromVariant(variant) {
 
 function isDiscounted(v) {
   const p  = parseFloat(v?.price ?? '0');
-  // admite REST (compare_at_price) y GraphQL (compareAtPrice)
   const cp = parseFloat((v?.compare_at_price ?? v?.compareAtPrice ?? '0'));
   return Number.isFinite(p) && Number.isFinite(cp) && cp > p;
 }
 
-function verifyHmac(req) {
+function verifyHmac(req, rawBody) {
   if (!WEBHOOK_SECRET) return true;
   try {
-    const raw = Buffer.from(JSON.stringify(req.body));
-    const digest = crypto.createHmac('sha256', WEBHOOK_SECRET).update(raw).digest('base64');
-    const hmac = req.get('X-Shopify-Hmac-Sha256') || '';
-    return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(hmac));
+    const digest = crypto.createHmac('sha256', WEBHOOK_SECRET).update(rawBody).digest('base64');
+    const hmacHeader = req.get('X-Shopify-Hmac-Sha256') || '';
+    return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(hmacHeader));
   } catch {
     return false;
   }
 }
 
-// --- REST sin fields (para asegurar variants completos)
+// --- REST completo
 async function fetchProductREST(productIdNum) {
   const url = `https://${SHOP_DOMAIN}/admin/api/${API_VERSION}/products/${productIdNum}.json`;
   const res = await fetch(url, {
@@ -123,7 +120,6 @@ async function fetchProductGQL(productIdNum) {
   `;
   const d = await adminGraphQL(q, { id: gid });
   const nodes = d?.product?.variants?.nodes || [];
-  // normalizo claves a las del REST para reutilizar lógica
   const variants = nodes.map(n => ({
     admin_graphql_api_id: n.id,
     price: n.price,
@@ -135,49 +131,59 @@ async function fetchProductGQL(productIdNum) {
 // ---------- main ----------
 export default async function productsUpdate(req, res) {
   try {
-    if (!verifyHmac(req)) {
+    // Aseguramos rawBody + payload
+    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body || {}));
+    if (!verifyHmac(req, rawBody)) {
       console.warn('⚠️  HMAC inválido en products/update');
+      // Puedes devolver 401 si quieres bloquear reintentos:
       // return res.status(401).json({ ok:false, error:'invalid_hmac' });
     }
 
-    const payload = req.body || {};
+    let payload;
+    try {
+      payload = Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString('utf8')) : (req.body || {});
+    } catch {
+      payload = {};
+    }
+
+    // Datos base del webhook
     let handle = String(payload.handle || '').toLowerCase();
     let variants = Array.isArray(payload.variants) ? payload.variants : [];
 
-    // si no hay variantes en el webhook, intento REST
-    if (!variants.length) {
-      const productIdNum = String(payload.id || '').replace(/\D/g, '');
-      if (productIdNum) {
-        const p = await fetchProductREST(productIdNum);
-        if (!handle && p.handle) handle = String(p.handle).toLowerCase();
-        variants = Array.isArray(p.variants) ? p.variants : [];
-        console.log(`🔁 REST fallback: variantes recuperadas = ${variants.length}`);
-      }
+    // Resolver productId tanto desde id como desde admin_graphql_api_id
+    const productIdNum =
+      String(payload.id || '').replace(/\D/g, '') ||
+      String(payload.admin_graphql_api_id || '').replace(/\D/g, '');
+
+    // Si no hay variantes, intentamos REST
+    if (!variants.length && productIdNum) {
+      const p = await fetchProductREST(productIdNum);
+      if (!handle && p.handle) handle = String(p.handle).toLowerCase();
+      variants = Array.isArray(p.variants) ? p.variants : [];
+      console.log(`🔁 REST fallback: variantes recuperadas = ${variants.length} (productId=${productIdNum})`);
     }
 
-    // si sigue sin variantes, intento GraphQL
-    if (!variants.length) {
-      const productIdNum = String(payload.id || '').replace(/\D/g, '');
-      if (productIdNum) {
-        const p = await fetchProductGQL(productIdNum);
-        if (!handle && p.handle) handle = String(p.handle).toLowerCase();
-        variants = Array.isArray(p.variants) ? p.variants : [];
-        console.log(`🧪 GraphQL fallback: variantes recuperadas = ${variants.length}`);
-      }
+    // Si sigue sin variantes, intentamos GraphQL
+    if (!variants.length && productIdNum) {
+      const p = await fetchProductGQL(productIdNum);
+      if (!handle && p.handle) handle = String(p.handle).toLowerCase();
+      variants = Array.isArray(p.variants) ? p.variants : [];
+      console.log(`🧪 GraphQL fallback: variantes recuperadas = ${variants.length} (productId=${productIdNum})`);
     }
 
+    // Si aún no hay, salimos limpio (evita reintentos masivos de Shopify)
     if (!variants.length) {
       console.log('ℹ️  products/update sin variants tras fetch. OK');
       return res.status(200).json({ ok: true, noVariantsAfterFetch: true });
     }
 
-    // exclusión por handle
+    // Exclusión por handle (ej.: "second-life")
     if (handle.includes(EXCLUDE_HANDLE)) {
       console.log(`🟡 Producto excluido por handle: ${handle}`);
       return res.status(200).json({ ok: true, excluded: true, handle });
     }
 
-    // separar listas
+    // Separamos
     const toRebajas = [];
     const toGeneral = [];
     for (const v of variants) {
@@ -187,16 +193,13 @@ export default async function productsUpdate(req, res) {
       else toGeneral.push(gid);
     }
 
+    // Asignamos por lotes
     const ops = [];
     if (PROFILE_REBAJAS_ID && toRebajas.length) ops.push(assignToProfile(PROFILE_REBAJAS_ID, toRebajas));
     if (PROFILE_GENERAL_ID && toGeneral.length) ops.push(assignToProfile(PROFILE_GENERAL_ID, toGeneral));
     await Promise.all(ops);
 
-    console.log('✅ products/update asignado:', {
-      handle,
-      rebajas: toRebajas.length,
-      general: toGeneral.length,
-    });
+    console.log('✅ products/update asignado:', { handle, rebajas: toRebajas.length, general: toGeneral.length });
 
     return res.status(200).json({
       ok: true,
@@ -206,6 +209,7 @@ export default async function productsUpdate(req, res) {
     });
   } catch (err) {
     console.error('❌ products-update error:', err.message);
+    // respondemos 200 para no forzar reintentos de Shopify, pero registramos el error
     return res.status(200).json({ ok: false, error: err.message });
   }
 }
