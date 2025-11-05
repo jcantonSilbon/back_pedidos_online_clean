@@ -26,3 +26,15 @@ Ejecución programada con **node-cron**:
 - **Informe mensual** → primer día de cada mes a las **09:00**.
 
 Correo enviado desde **Resend** a: REPORT_TO_EMAIL=cristina.lopez@silbon.com
+
+
+
+
+
+
+
+
+
+
+
+Autor: Javier García-Rojo Cantón — Lead Developer, Silbon
