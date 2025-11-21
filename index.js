@@ -21,6 +21,28 @@ dotenv.config();
 const app = express();
 app.use(cors());
 
+const { getNewsletterStatus } = require("./src/services/salesmanago");
+
+app.get("/salesmanago/newsletter-status", async (req, res) => {
+  try {
+    const smclient = req.query.smclient;
+
+    if (!smclient) {
+      return res.status(400).json({ error: "smclient es obligatorio" });
+    }
+
+    const data = await getNewsletterStatus(smclient);
+
+    res.json(data);
+  } catch (error) {
+    console.error("[SM][status] ❌", error.message);
+    res.status(500).json({ error: "Error obteniendo estado de newsletter" });
+  }
+});
+
+
+
+
 // 🔐 Webhook Shopify con RAW body para validar HMAC
 app.post('/api/products-update', express.raw({ type: 'application/json' }), productsUpdate);
 
