@@ -24,22 +24,36 @@ app.use(cors());
 
 
 
-app.get("/salesmanago/newsletter-status", async (req, res) => {
+// [JG][Salesmanago] Estado de newsletter por contactId o email
+app.get('/salesmanago/newsletter-status', async (req, res) => {
   try {
-    const smclient = req.query.smclient;
+    const { contactId, email } = req.query;
 
-    if (!smclient) {
-      return res.status(400).json({ error: "smclient es obligatorio" });
+    // Podemos aceptar contactId (si algún día tienes smclient)
+    // o directamente email (lo que estamos usando ahora desde Shopify)
+    if (!contactId && !email) {
+      return res.status(400).json({
+        ok: false,
+        error: 'contactId o email requerido',
+      });
     }
 
-    const data = await getNewsletterStatus(smclient);
+    const data = await getNewsletterStatus({ contactId, email });
 
-    res.json(data);
-  } catch (error) {
-    console.error("[SM][status] ❌", error.message);
-    res.status(500).json({ error: "Error obteniendo estado de newsletter" });
+    return res.json({
+      ok: true,
+      ...data,
+    });
+  } catch (err) {
+    console.error('[SM][NL] Error en /salesmanago/newsletter-status', err);
+    return res.status(500).json({
+      ok: false,
+      error: 'Error interno Salesmanago',
+      message: err.message,
+    });
   }
 });
+
 
 
 
