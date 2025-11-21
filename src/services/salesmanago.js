@@ -39,30 +39,33 @@ export async function getNewsletterStatus(contactId) {
 
   const contact = data?.contacts?.[0] || null;
 
-  // 🔍 intento genérico de encontrar el flag (por si cuela)
-  let rawFlag = null;
+  // 🧠 NUEVO: usamos directamente el campo "optedOut"
+  let optedOut = null;
   let acceptsNewsletter = null;
 
-  if (contact && contact.details) {
-    for (const [key, value] of Object.entries(contact.details)) {
-      if (typeof value === 'boolean' && /news|opt|email/i.test(key)) {
-        rawFlag = value; // true = NO acepta, false = SÍ acepta
-        break;
-      }
+  if (contact) {
+    // en tu JSON venía a nivel raíz: "optedOut": true
+    if (typeof contact.optedOut === 'boolean') {
+      optedOut = contact.optedOut;
+    }
+    // por si acaso en algún entorno viene anidado en details
+    else if (contact.details && typeof contact.details.optedOut === 'boolean') {
+      optedOut = contact.details.optedOut;
     }
 
-    if (typeof rawFlag === 'boolean') {
-      acceptsNewsletter = !rawFlag;
+    // optedOut = true  -> NO acepta news
+    // optedOut = false -> SÍ acepta news
+    if (typeof optedOut === 'boolean') {
+      acceptsNewsletter = !optedOut;
     }
   }
 
-  // 👇 devolvemos TODO lo interesante para que lo veas en Postman
   return {
     contactId,
-    acceptsNewsletter,   // lo que usaremos luego en Shopify
-    rawFlag,             // el booleano que encontremos
+    acceptsNewsletter, // 👉 true = SÍ, false = NO
+    optedOut,          // el flag original de Salesmanago
     found: !!contact,
-    rawContact: contact, // contacto de listById
-    rawResponse: data,   // respuesta completa de Salesmanago
+    rawContact: contact,
+    rawResponse: data,
   };
 }
