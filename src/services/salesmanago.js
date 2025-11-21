@@ -1,76 +1,104 @@
-const axios = require("axios");
-const crypto = require("crypto");
+// src/services/salesmanago.js
+import axios from 'axios';
+import crypto from 'crypto';
 
-const API_KEY = process.env.SMANAGO_API_KEY;
-const API_SECRET = process.env.SMANAGO_API_SECRET;
-const CLIENT_ID = process.env.SMANAGO_CLIENT_ID;
-const OWNER = process.env.SMANAGO_OWNER_EMAIL;
-const API_URL = "https://xxx.salesmanago.com/api/contact/listById"; // <-- pon aquí el tuyo real
+const SM_CLIENT_ID = process.env.SMANAGO_CLIENT_ID;
+const SM_API_KEY = process.env.SMANAGO_API_KEY;
+const SM_API_SECRET = process.env.SMANAGO_API_SECRET;
+const SM_OWNER = process.env.SMANAGO_OWNER_EMAIL;
 
-/**
- * Genera hash SHA1 requerido por Salesmanago
- */
-function generateSha(requestTime) {
+// Puedes ponerlo en env si quieres: SMANAGO_LISTBYID_URL
+const SM_LIST_BY_ID_URL =
+  process.env.SMANAGO_LISTBYID_URL ||
+  'https://app3.salesmanago.pl/api/contact/listById';
+
+function buildSha() {
   return crypto
-    .createHash("sha1")
-    .update(API_KEY + CLIENT_ID + API_SECRET + requestTime)
-    .digest("hex");
+    .createHash('sha1')
+    .update(SM_API_KEY + SM_CLIENT_ID + SM_API_SECRET)
+    .digest('hex');
 }
 
-/**
- * Llama a Salesmanago para obtener info del contacto por contactId
- * Devuelve:
- *   {
- *     contactId: string,
- *     acceptsNewsletter: boolean
- *   }
- */
-async function getNewsletterStatus(contactId) {
+export async function getNewsletterStatus(contactId) {
   if (!contactId) {
-    throw new Error("contactId vacío");
+    throw new Error('contactId vacío');
   }
 
   const requestTime = Date.now();
-  const sha = generateSha(requestTime);
+  const sha = buildSha();
 
   const payload = {
-    clientId: CLIENT_ID,
-    apiKey: API_KEY,
+    clientId: SM_CLIENT_ID,
+    apiKey: SM_API_KEY,
     requestTime,
     sha,
-    owner: OWNER,
-    contactId: [contactId]
+    owner: SM_OWNER,
+    contactId: [contactId], // 👈 nos pasan un array con ese contactId/smclient
   };
 
+  // Log sin apiKey/sha para que no se filtren credenciales
+  console.log('[SM][listById] ▶️ Payload', JSON.stringify({
+    ...payload,
+    apiKey: '***',
+    sha: '***',
+  }));
+
   try {
-    const response = await axios.post(API_URL, payload, {
-      headers: { "Content-Type": "application/json" },
+    const { data } = await axios.post(SM_LIST_BY_ID_URL, payload, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 10000,
     });
 
-    const raw = response.data;
+    console.log('[SM][listById] raw response:', JSON.stringify(data, null, 2));
 
-    if (!raw || !raw.contacts || raw.contacts.length === 0) {
-      throw new Error("Contacto no encontrado en Salesmanago");
+    // Depende un poco de cómo devuelva Salesmanago la estructura.
+    // Normalmente algo tipo data.contacts[0] o similar.
+    const contact =
+      (Array.isArray(data?.contacts) && data.contacts[0]) ||
+      data?.contact ||
+      null;
+
+    if (!contact) {
+      console.warn('[SM][listById] ⚠️ Sin contacto para', contactId);
+      return {
+        contactId,
+        acceptsNewsletter: null,
+        rawFlag: null,
+        found: false,
+      };
     }
 
-    const contact = raw.contacts[0];
+    // Aquí intentamos localizar el booleano. Hasta que lo veamos claro en logs,
+    // miramos varios nombres típicos.
+    const details = contact.details || contact.contactDetails || contact;
 
-    // OJO → Salesmanago usa:
-    //   true  → NO acepta newsletter (opt-out)
-    //   false → SÍ acepta newsletter (opt-in)
-    const optOut = contact.details?.optOut;
+    const rawFlag =
+      details?.newsletterOptOut ??
+      details?.optOut ??
+      details?.optout ??
+      details?.newsletterOptin ??
+      null;
+
+    let acceptsNewsletter = null;
+
+    // Según lo que te han dicho:
+    // true  -> NO acepta news (opt-out)
+    // false -> SÍ acepta news
+    if (typeof rawFlag === 'boolean') {
+      acceptsNewsletter = rawFlag === false;
+    }
 
     const normalized = {
       contactId,
-      acceptsNewsletter: optOut === false, // false = acepta
+      acceptsNewsletter,
+      rawFlag,
+      found: true,
     };
 
+    console.log('[SM][listById] normalized:', normalized);
     return normalized;
-
-  } catch (error) {
-    console.error("[Salesmanago] Error:", error.response?.data || error.message);
-    throw new Error("Error al consultar Salesmanago");
+  } catch (err) {
+    console.error('[SM][listById] ❌ error', err.response?.data || err.message);
+    throw err;
   }
 }
-
-module.exports = { getNewsletterStatus };

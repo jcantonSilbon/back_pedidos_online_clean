@@ -16,12 +16,13 @@ import { validatePayload } from "./src/utils/validate.js";
 import { createZendeskTicket } from "./src/utils/zendesk.js";
 import assignProfile from './api/assign-profile.js';
 import productsUpdate from './api/products-update.js';
+import { getNewsletterStatus } from './src/services/salesmanago.js';
 
 dotenv.config();
 const app = express();
 app.use(cors());
 
-const { getNewsletterStatus } = require("./src/services/salesmanago");
+
 
 app.get("/salesmanago/newsletter-status", async (req, res) => {
   try {
