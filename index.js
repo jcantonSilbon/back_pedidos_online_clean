@@ -753,26 +753,25 @@ app.post('/api/assign-profile', assignProfile);
 // ==============================================
 app.post("/shopify/create-abandoned-discount", async (req, res) => {
   try {
-    const { customer, abandonment } = req.body;
+    // AHORA Flow envía: email, abandonment_id, products
+    const { email, abandonment_id, products } = req.body;
 
-    if (!customer?.email || !abandonment?.productsAddedToCart?.length) {
+    if (!email || !abandonment_id || !products?.length) {
       return res.status(400).json({
         ok: false,
-        error: "Faltan datos: customer.email o productosAddedToCart",
+        error: "Faltan datos: email, abandonment_id o products",
       });
     }
 
     // Código para el cliente
-    const code = `ABANDONO-${abandonment.checkoutId}`.toUpperCase();
+    const code = `ABANDONO-${abandonment_id}`.toUpperCase();
 
     // Fechas
     const startsAt = new Date().toISOString();
     const endsAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(); // +48h
 
-    // Productos del carrito en formato GID
-    const productsToAdd = abandonment.productsAddedToCart.map(
-      (item) => item.product.id
-    );
+    // Productos del carrito en formato GID (ya vienen de Flow)
+    const productsToAdd = products;
 
     // Mutación GraphQL
     const mutation = `
@@ -791,7 +790,7 @@ app.post("/shopify/create-abandoned-discount", async (req, res) => {
           orderDiscounts: false,
           shippingDiscounts: false,
         },
-        title: `Abandono carrito 10% - ${customer.email}`,
+        title: `Abandono carrito 10% - ${email}`,
         code,
         startsAt,
         endsAt,
@@ -812,7 +811,7 @@ app.post("/shopify/create-abandoned-discount", async (req, res) => {
     };
 
     // Llamada a Admin GraphQL
-    const shop = process.env.SHIP_SHOP_DOMAIN;
+    const shop = process.env.SHIP_SHOP_DOMAIN; // ojo: revisa que en .env se llame así
     const token = process.env.SHOPIFY_API_TOKEN;
 
     const graphResp = await fetch(
