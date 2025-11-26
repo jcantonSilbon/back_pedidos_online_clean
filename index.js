@@ -744,6 +744,122 @@ app.post('/api/zendesk-contact', async (req, res) => {
 // Endpoint manual por si quieres probar asignación directa
 app.post('/api/assign-profile', assignProfile);
 
+
+
+
+// ==============================================
+// [JG] Crear descuento 10% por carrito abandonado
+// Endpoint llamado desde Shopify Flow
+// ==============================================
+app.post("/shopify/create-abandoned-discount", async (req, res) => {
+  try {
+    const { customer, abandonment } = req.body;
+
+    if (!customer?.email || !abandonment?.productsAddedToCart?.length) {
+      return res.status(400).json({
+        ok: false,
+        error: "Faltan datos: customer.email o productosAddedToCart",
+      });
+    }
+
+    // Código para el cliente
+    const code = `ABANDONO-${abandonment.checkoutId}`.toUpperCase();
+
+    // Fechas
+    const startsAt = new Date().toISOString();
+    const endsAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(); // +48h
+
+    // Productos del carrito en formato GID
+    const productsToAdd = abandonment.productsAddedToCart.map(
+      (item) => item.product.id
+    );
+
+    // Mutación GraphQL
+    const mutation = `
+      mutation CreateDiscount($discount: DiscountCodeBasicInput!) {
+        discountCodeBasicCreate(basicCodeDiscount: $discount) {
+          codeDiscountNode { id }
+          userErrors { field message }
+        }
+      }
+    `;
+
+    const variables = {
+      discount: {
+        combinesWith: {
+          productDiscounts: false,
+          orderDiscounts: false,
+          shippingDiscounts: false,
+        },
+        title: `Abandono carrito 10% - ${customer.email}`,
+        code,
+        startsAt,
+        endsAt,
+        appliesOncePerCustomer: true,
+        usageLimit: 1,
+        customerGets: {
+          value: { percentage: 0.1 },
+          items: {
+            products: {
+              productsToAdd,
+            },
+            all: false,
+          },
+          appliesOnOneTimePurchase: true,
+          appliesOnSubscription: false,
+        },
+      },
+    };
+
+    // Llamada a Admin GraphQL
+    const shop = process.env.SHOPIFY_SHOP_DOMAIN;
+    const token = process.env.SHOPIFY_ADMIN_API_TOKEN;
+
+    const graphResp = await fetch(
+      `https://${shop}/admin/api/2025-01/graphql.json`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": token,
+        },
+        body: JSON.stringify({
+          query: mutation,
+          variables,
+        }),
+      }
+    );
+
+    const json = await graphResp.json();
+
+    if (json.data?.discountCodeBasicCreate?.userErrors?.length) {
+      console.error(json.data.discountCodeBasicCreate.userErrors);
+      return res.status(400).json({
+        ok: false,
+        error: json.data.discountCodeBasicCreate.userErrors,
+      });
+    }
+
+    // OK
+    return res.json({ ok: true, code });
+  } catch (err) {
+    console.error("[ERROR] create-abandoned-discount", err);
+    res.status(500).json({
+      ok: false,
+      error: err.message,
+    });
+  }
+});
+
+
+
+
+
+
+
+
+
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🔥 Servidor escuchando en http://localhost:${PORT}`);
