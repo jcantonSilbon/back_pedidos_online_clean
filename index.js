@@ -812,8 +812,8 @@ app.post("/shopify/create-abandoned-discount", async (req, res) => {
     };
 
     // Llamada a Admin GraphQL
-    const shop = process.env.SHOPIFY_SHOP_DOMAIN;
-    const token = process.env.SHOPIFY_ADMIN_API_TOKEN;
+    const shop = process.env.SHIP_SHOP_DOMAIN;
+    const token = process.env.SHOPIFY_API_TOKEN;
 
     const graphResp = await fetch(
       `https://${shop}/admin/api/2025-01/graphql.json`,
