@@ -17,6 +17,8 @@ import { createZendeskTicket } from "./src/utils/zendesk.js";
 import assignProfile from './api/assign-profile.js';
 import productsUpdate from './api/products-update.js';
 import { getNewsletterStatus } from './src/services/salesmanago.js';
+import { wappingWebhookHandler } from './api/wappingWebhook.js';
+
 
 dotenv.config();
 const app = express();
@@ -60,6 +62,10 @@ app.get('/salesmanago/newsletter-status', async (req, res) => {
 
 // 🔐 Webhook Shopify con RAW body para validar HMAC
 app.post('/api/products-update', express.raw({ type: 'application/json' }), productsUpdate);
+
+// 🔐 Webhook Wapping con RAW body para validar HMAC
+app.post('/webhooks/wapping', express.raw({ type: 'application/json' }), wappingWebhookHandler);
+
 
 // Para el resto, JSON normal
 app.use(express.json());
