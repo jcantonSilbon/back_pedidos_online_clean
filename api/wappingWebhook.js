@@ -1,10 +1,7 @@
 import crypto from "crypto";
 
 function hmacSha256Hex(secret, payload) {
-  return crypto
-    .createHmac("sha256", secret)
-    .update(payload, "utf8")
-    .digest("hex");
+  return crypto.createHmac("sha256", secret).update(payload, "utf8").digest("hex");
 }
 
 function safeEqualHex(a, b) {
@@ -18,48 +15,93 @@ function safeEqualHex(a, b) {
   }
 }
 
+function maskEmail(email) {
+  if (!email || typeof email !== "string") return email;
+  const [u, d] = email.split("@");
+  if (!d) return "***";
+  return `${u?.slice(0, 2) || ""}***@${d}`;
+}
+function maskPhone(phone) {
+  if (!phone || typeof phone !== "string") return phone;
+  const last = phone.slice(-3);
+  return `***${last}`;
+}
+
 export async function wappingWebhookHandler(req, res) {
-  const alwaysOk = () => res.status(200).json({ ok: true });
+  const alwaysOk = (reason) => {
+    console.log("[WAPPING] -> 200 ignored:", reason);
+    return res.status(200).json({ ok: true });
+  };
+
+  // 1) Log de entrada (para saber que pega)
+  console.log("[WAPPING] HIT", new Date().toISOString());
 
   const secret = process.env.WAPPING_WEBHOOK_SECRET;
   const maxSkew = Number(process.env.WAPPING_MAX_SKEW_SECONDS || "300");
 
-  if (!secret) return alwaysOk();
-
   const signature = req.header("Wapping-Signature");
   const timestampHeader = req.header("Wapping-Timestamp");
+  const contentType = req.header("content-type");
 
-  if (!signature || !timestampHeader) return alwaysOk();
+  console.log("[WAPPING] headers:", {
+    hasSecret: !!secret,
+    contentType,
+    hasSignature: !!signature,
+    hasTimestamp: !!timestampHeader,
+  });
+
+  if (!secret) return alwaysOk("missing_secret");
+  if (!signature || !timestampHeader) return alwaysOk("missing_headers");
 
   const ts = Number(timestampHeader);
   const now = Math.floor(Date.now() / 1000);
   const skew = Math.abs(now - ts);
 
-  if (!Number.isFinite(ts) || skew > maxSkew) return alwaysOk();
+  console.log("[WAPPING] time:", { ts, now, skew, maxSkew });
+
+  if (!Number.isFinite(ts) || skew > maxSkew) return alwaysOk("timestamp_out_of_window");
 
   const rawBody = req.body?.toString("utf8") || "";
+  console.log("[WAPPING] raw length:", rawBody.length);
+
   const signedPayload = `${ts}.${rawBody}`;
   const expectedSig = hmacSha256Hex(secret, signedPayload);
 
-  if (!safeEqualHex(expectedSig, signature)) return alwaysOk();
+  const sigOk = safeEqualHex(expectedSig, signature);
+  console.log("[WAPPING] signature ok?:", sigOk);
+
+  if (!sigOk) {
+    // No mostramos firmas completas (por seguridad), solo un trocito
+    console.log("[WAPPING] signature mismatch:", {
+      got: String(signature).slice(0, 10) + "...",
+      expected: String(expectedSig).slice(0, 10) + "...",
+    });
+    return alwaysOk("bad_signature");
+  }
 
   let payload;
   try {
     payload = JSON.parse(rawBody);
   } catch {
-    return alwaysOk();
+    return alwaysOk("invalid_json");
   }
 
   const { entityCode, eventCode, entity } = payload || {};
 
-  if (entityCode !== "Customer") return alwaysOk();
+  // Log “limpio” del evento
+  console.log("[WAPPING] event:", { entityCode, eventCode });
 
-  console.log("[WAPPING]", eventCode, entity);
+  // Log “sanitizado” de entity
+  const safeEntity = entity
+    ? {
+        ...entity,
+        email: maskEmail(entity.email),
+        phone: maskPhone(entity.phone),
+        mobile: maskPhone(entity.mobile),
+      }
+    : null;
 
-  // 👉 AQUÍ luego:
-  // - marcar People
-  // - baja
-  // - sync Shopify / Salesmanago / lo que sea
+  console.log("[WAPPING] entity (safe):", safeEntity);
 
-  return alwaysOk();
+  return res.status(200).json({ ok: true });
 }
