@@ -1,4 +1,6 @@
 import crypto from "crypto";
+import { addCustomerTag } from "../src/services/shopify.js";
+
 
 function hmacSha256Hex(secret, payload) {
   return crypto.createHmac("sha256", secret).update(payload, "utf8").digest("hex");
@@ -102,6 +104,29 @@ export async function wappingWebhookHandler(req, res) {
     : null;
 
   console.log("[WAPPING] entity (safe):", safeEntity);
+
+    const eCode = String(entityCode || "").toUpperCase();
+  const evCode = String(eventCode || "").toUpperCase();
+
+  if (eCode === "CUSTOMER" && (evCode === "CREATE" || evCode === "UPDATE")) {
+    const thirdPartyId = entity?.thirdPartyIdentifiers?.find(
+      (x) =>
+        typeof x?.thirdPartyId === "string" &&
+        x.thirdPartyId.startsWith("gid://shopify/Customer/")
+    )?.thirdPartyId;
+
+    if (thirdPartyId) {
+      try {
+        await addCustomerTag({ customerGid: thirdPartyId, tag: "SilbonPeople" });
+        console.log("[WAPPING] Shopify tag added:", thirdPartyId);
+      } catch (err) {
+        console.log("[WAPPING] Shopify tag add failed:", err.message);
+      }
+    } else {
+      console.log("[WAPPING] No Shopify Customer GID found in thirdPartyIdentifiers");
+    }
+  }
+
 
   return res.status(200).json({ ok: true });
 }
