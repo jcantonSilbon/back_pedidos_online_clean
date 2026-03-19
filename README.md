@@ -25,7 +25,71 @@ Ejecución programada con **node-cron**:
 - **Informe semanal** → cada lunes a las **09:00 (Europe/Madrid)**.  
 - **Informe mensual** → primer día de cada mes a las **09:00**.
 
-Correo enviado desde **Resend** a: REPORT_TO_EMAIL=cristina.lopez@silbon.com
+Correo enviado desde **Resend** a:  REPORT_TO_EMAIL=cristina.lopez@silbon.com
+
+
+---
+
+## 🔗 Integración Wapping → Shopify (People)
+
+El backend incluye una **integración en tiempo real con Wapping** para sincronizar el estado de clientes **People** con Shopify mediante webhooks.
+
+### 📥 Webhook
+
+Endpoint productivo: POST /webhooks/wapping
+
+
+- Recibe eventos de la entidad `Customer` desde Wapping.
+- Eventos soportados:
+  - `Customer / Create`
+  - `Customer / Update`
+  - `Customer / Delete`
+- El body se procesa en **RAW** para poder validar correctamente la firma.
+
+---
+
+### 🔐 Seguridad del webhook
+
+Cada evento recibido se valida mediante:
+- Header `Wapping-Timestamp`
+- Header `Wapping-Signature`
+- Firma calculada con: HMAC-SHA256(secret, "{timestamp}.{rawBody}")
+
+- Control anti-replay mediante ventana temporal configurable.
+- El endpoint **siempre responde HTTP 200**, incluso si el evento se ignora (según especificación de Wapping).
+
+---
+
+### 🔁 Sincronización de clientes People
+
+Cuando se recibe un evento `Customer / Create` o `Customer / Update`:
+
+- Se busca un identificador de cliente Shopify en: entity.thirdPartyIdentifiers[].thirdPartyId
+- Si existe un identificador con formato: gid://shopify/Customer/XXXX
+- Se añade automáticamente en Shopify la tag: SilbonPeople
+
+
+✔️ Operación idempotente  
+✔️ No sobrescribe ni elimina tags existentes  
+✔️ Sincronización en tiempo real
+
+---
+
+### 🛒 Shopify
+
+- Integración mediante **Shopify Admin GraphQL API**.
+- Mutación utilizada: `tagsAdd`.
+- Variables de entorno requeridas:
+- `SHIP_SHOP_DOMAIN`
+- `SHOPIFY_API_TOKEN`
+- `SHIP_API_VERSION`
+
+---
+
+## ✍️ Autor
+
+**Javier García-Rojo Cantón**  
+Lead Developer — Silbon
 
 
 
@@ -33,8 +97,3 @@ Correo enviado desde **Resend** a: REPORT_TO_EMAIL=cristina.lopez@silbon.com
 
 
 
-
-
-
-
-Autor: Javier García-Rojo Cantón — Lead Developer, Silbon
