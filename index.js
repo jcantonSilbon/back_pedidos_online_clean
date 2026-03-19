@@ -16,7 +16,7 @@ import { validatePayload } from "./src/utils/validate.js";
 import { createZendeskTicket } from "./src/utils/zendesk.js";
 import assignProfile from './api/assign-profile.js';
 import productsUpdate from './api/products-update.js';
-import { getNewsletterStatus } from './src/services/salesmanago.js';
+import { getNewsletterStatus, getTags } from './src/services/salesmanago.js';
 import { wappingWebhookHandler } from './api/wappingWebhook.js';
 
 
@@ -763,7 +763,41 @@ app.post('/api/assign-profile', assignProfile);
 
 
 
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🔥 Servidor escuchando en http://localhost:${PORT}`);
+});
+
+
+app.get('/api/sm-tags', async (req, res) => {
+  try {
+    const showSystemTagsParam = String(req.query.showSystemTags ?? 'true').toLowerCase();
+    const showSystemTags = !['false', '0', 'no'].includes(showSystemTagsParam);
+    const downloadParam = String(req.query.download ?? 'false').toLowerCase();
+    const shouldDownload = ['true', '1', 'yes'].includes(downloadParam);
+
+    const result = await getTags({ showSystemTags });
+
+    if (shouldDownload) {
+      const filename = `salesmanago-tags-${Date.now()}.json`;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    }
+
+    return res.json({
+      ok: true,
+      showSystemTags,
+      total: result.tags.length,
+      ...result,
+    });
+  } catch (err) {
+    console.error('[SM][TAGS] Error en /api/sm-tags', err.response?.data || err.message);
+    return res.status(500).json({
+      ok: false,
+      error: 'Error obteniendo tags de Salesmanago',
+      message: err.message,
+      details: err.response?.data || null,
+    });
+  }
 });

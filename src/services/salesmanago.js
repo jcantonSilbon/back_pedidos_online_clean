@@ -126,3 +126,22 @@ export async function getNewsletterStatus({ contactId, email }) {
     rawResponse,
   };
 }
+
+export async function getTags({ showSystemTags = true } = {}) {
+  const payload = buildAuth({
+    showSystemTags: Boolean(showSystemTags),
+  });
+
+  const { data } = await axios.post(
+    `${SM_BASE_URL}/api/contact/tags`,
+    payload,
+    { headers: { 'Content-Type': 'application/json' } },
+  );
+
+  return {
+    success: Boolean(data?.success),
+    message: data?.message || [],
+    tags: Array.isArray(data?.tags) ? data.tags : [],
+    rawResponse: data,
+  };
+}
